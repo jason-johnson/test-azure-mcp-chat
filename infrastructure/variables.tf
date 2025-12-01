@@ -25,5 +25,5 @@ variable "environment" {
 variable "acr_branches" {
   description = "branches to use for acr tasks"
   type        = list(string)
-  default     = ["main"]  
+  default     = ["main"]
 }

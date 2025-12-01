@@ -5,7 +5,7 @@ resource "azurerm_linux_web_app" "app" {
   service_plan_id     = azurerm_service_plan.main.id
 
   identity {
-    type         = "SystemAssigned"
+    type = "SystemAssigned"
   }
 
   site_config {
