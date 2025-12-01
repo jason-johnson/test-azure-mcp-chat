@@ -6,7 +6,7 @@ variable "salt" {
 
 variable "location" {
   description = "Default location to use if not specified"
-  default     = "eastus"
+  default     = "switzerlandnorth"
   type        = string
 }
 
