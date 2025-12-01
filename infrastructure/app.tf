@@ -1,22 +1,11 @@
-resource "azurerm_user_assigned_identity" "app" {
-  name                = provider::namep::namestring("azurerm_user_assigned_identity", local.namep_config, { name = "app" })
-  resource_group_name = azurerm_resource_group.main.name
-  location            = azurerm_resource_group.main.location
-}
-
-locals {
-  app_name = provider::namep::namestring("azurerm_linux_web_app", local.namep_config, { name = "app" })
-}
-
 resource "azurerm_linux_web_app" "app" {
-  name                = local.app_name
+  name                = provider::namep::namestring("azurerm_linux_web_app", local.namep_config)
   resource_group_name = azurerm_resource_group.main.name
   location            = azurerm_service_plan.main.location
   service_plan_id     = azurerm_service_plan.main.id
 
   identity {
-    type         = "SystemAssigned, UserAssigned"
-    identity_ids = [azurerm_user_assigned_identity.app.id]
+    type         = "SystemAssigned"
   }
 
   site_config {

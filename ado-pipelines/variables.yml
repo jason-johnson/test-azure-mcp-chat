@@ -1,0 +1,13 @@
+variables:
+  - name: terraformVersion
+    value: 1.14.0
+  - name: terraformPath
+    value: infrastructure
+  - name: servicePrinciple
+    value: mcaps-jasojohnson-1
+  - name: terraformContainerName
+    value: terraform-mcpchat
+  - name: terraformStorageAccountName
+    value: sajasonmcapterraform
+  - name: terraformResourceGroupName
+    value: rg-manual
