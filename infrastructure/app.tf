@@ -1,3 +1,11 @@
+resource "azurerm_service_plan" "main" {
+  name                = provider::namep::namestring("azurerm_service_plan", local.namep_config)
+  resource_group_name = azurerm_resource_group.main.name
+  location            = azurerm_resource_group.main.location
+  os_type             = "Linux"
+  sku_name            = "B1"
+}
+
 resource "azurerm_linux_web_app" "app" {
   name                = provider::namep::namestring("azurerm_linux_web_app", local.namep_config)
   resource_group_name = azurerm_resource_group.main.name
