@@ -16,6 +16,7 @@ data "namep_configuration" "main" {
     azure_dashes          = "#{SLUG}-#{APP}-#{ENV}-#{LOCS[LOC]}-#{NAME}#{-SALT}"
     azure_dashes_global   = "#{SLUG}-#{APP}-#{ENV}-#{LOCS[LOC]}-#{RND}#{-SALT}"
     azuread_application   = "#{APP}-#{ENV}-#{LOCS[LOC]}-#{NAME}#{-SALT}"
+    azurerm_service_plan  = "plan-#{APP}-#{ENV}-#{LOCS[LOC]}-#{NAME}#{-SALT}"
   }
 }
 
