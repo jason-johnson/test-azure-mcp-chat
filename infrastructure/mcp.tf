@@ -1,3 +1,10 @@
+# User Managed Identity for MCP app
+resource "azurerm_user_assigned_identity" "mcp_app" {
+  name                = provider::namep::namestring("azurerm_user_assigned_identity", local.namep_config, { name = "mcp" })
+  location            = azurerm_resource_group.main.location
+  resource_group_name = azurerm_resource_group.main.name
+}
+
 # Docker Web App for MCP server
 resource "azurerm_linux_web_app" "mcp_app" {
   name                = provider::namep::namestring("azurerm_linux_web_app", local.namep_config, { name = "mcp" })
@@ -6,7 +13,8 @@ resource "azurerm_linux_web_app" "mcp_app" {
   service_plan_id     = azurerm_service_plan.main.id
 
   identity {
-    type = "SystemAssigned"
+    type         = "SystemAssigned, UserAssigned"
+    identity_ids = [azurerm_user_assigned_identity.mcp_app.id]
   }
 
   site_config {
@@ -19,8 +27,19 @@ resource "azurerm_linux_web_app" "mcp_app" {
   }
 
   app_settings = {
-    "APPLICATIONINSIGHTS_CONNECTION_STRING" = azurerm_application_insights.main.connection_string
-    "WEBSITES_ENABLE_APP_SERVICE_STORAGE"   = "false"
+    "APPLICATIONINSIGHTS_CONNECTION_STRING"           = azurerm_application_insights.main.connection_string
+    "WEBSITES_ENABLE_APP_SERVICE_STORAGE"             = "false"
+    "ASPNETCORE_ENVIRONMENT"                          = "Production"
+    "ASPNETCORE_URLS"                                 = "http://+:8080"
+    "AZURE_TOKEN_CREDENTIALS"                         = "managedidentitycredential"
+    "AZURE_MCP_INCLUDE_PRODUCTION_CREDENTIALS"        = "true"
+    "AZURE_MCP_COLLECT_TELEMETRY"                     = "true"
+    "AzureAd__Instance"                               = "https://login.microsoftonline.com/"
+    "AzureAd__TenantId"                               = data.azuread_client_config.current.tenant_id
+    "AzureAd__ClientId"                               = azurerm_user_assigned_identity.mcp_app.client_id
+    "AZURE_LOG_LEVEL"                                 = "Verbose"
+    "AZURE_MCP_DANGEROUSLY_DISABLE_HTTPS_REDIRECTION" = "true"
+
   }
 
   logs {
