@@ -35,7 +35,7 @@ output "openai_endpoint" {
 
 output "openai_deployment_name" {
   description = "Azure OpenAI deployment name"
-  value       = azurerm_cognitive_deployment.gpt4.name
+  value       = azurerm_cognitive_deployment.model.name
 }
 
 output "application_insights_connection_string" {
