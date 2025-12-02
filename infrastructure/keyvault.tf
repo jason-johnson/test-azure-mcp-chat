@@ -21,8 +21,14 @@ resource "azurerm_role_assignment" "managed_secrets" {
   principal_id         = data.azurerm_client_config.current.object_id
 }
 
-resource "azurerm_role_assignment" "app_secrets" {
+resource "azurerm_role_assignment" "mcp_app_secrets" {
   scope                = azurerm_key_vault.main.id
   role_definition_name = "Key Vault Secrets User"
-  principal_id         = azurerm_linux_web_app.app.identity[0].principal_id
+  principal_id         = azurerm_linux_web_app.mcp_app.identity[0].principal_id
+}
+
+resource "azurerm_role_assignment" "fe_app_secrets" {
+  scope                = azurerm_key_vault.main.id
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = azurerm_linux_web_app.python_app.identity[0].principal_id
 }
