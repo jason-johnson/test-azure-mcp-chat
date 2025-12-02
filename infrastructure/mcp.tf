@@ -11,7 +11,7 @@ resource "azurerm_linux_web_app" "mcp_app" {
 
   site_config {
     application_stack {
-      docker_image_name   = "mcr.microsoft.com/azure-sdk/azure-mcp:2.0.0-beta.7"
+      docker_image_name   = "azure-sdk/azure-mcp:2.0.0-beta.7"
       docker_registry_url = "https://mcr.microsoft.com"
     }
 
