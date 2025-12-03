@@ -6,7 +6,7 @@ parameters:
     default: '[ "main", "response" ]'
     type: string
   - name: salt
-    default: ''
+    default: ""
   - name: useWorkspace
     default: false
     type: boolean
@@ -17,22 +17,55 @@ variables:
     ${{ if eq(parameters.useWorkspace, true) }}:
       value: ${{ parameters.salt }}
     ${{ else }}:
-      value: ''
+      value: ""
 
 pool:
   vmImage: "ubuntu-latest"
 
-steps:
-  - template: terraform.yml
-    parameters:
-      terraformVersion: $(terraformVersion)
-      terraformPath: $(terraformPath)
-      servicePrinciple: $(servicePrinciple)
-      containerName: $(terraformContainerName)
-      storageAccountName: $(terraformStorageAccountName)
-      workspace: ${{ variables.saltVar }}
-      useWorkspace: ${{ parameters.useWorkspace }}
-      resourceGroupName: $(terraformResourceGroupName)
-      env:
-        TF_VAR_salt: ${{ variables.saltVar }}
-        TF_VAR_acr_branches: ${{ parameters.acrTaskBranches }}
+jobs:
+  - job: Terraform
+    displayName: "infrastructure deployment"
+    steps:
+      - template: terraform.yml
+        parameters:
+          terraformVersion: $(terraformVersion)
+          terraformPath: $(terraformPath)
+          servicePrinciple: $(servicePrinciple)
+          containerName: $(terraformContainerName)
+          storageAccountName: $(terraformStorageAccountName)
+          workspace: ${{ variables.saltVar }}
+          useWorkspace: ${{ parameters.useWorkspace }}
+          resourceGroupName: $(terraformResourceGroupName)
+          env:
+            TF_VAR_salt: ${{ variables.saltVar }}
+            TF_VAR_acr_branches: ${{ parameters.acrTaskBranches }}
+
+  - job: DeployPythonApp
+    displayName: "Deploy Python Application
+    dependsOn: Terraform
+    variables:
+          python_web_app_name: $[ dependencies.terraform.outputs['Terraform.python_web_app_name'] ]
+          resource_group_name: $[ dependencies.terraform.outputs['Terraform.resource_group_name'] ]
+    steps:
+      - task: ArchiveFiles@2  # Package Python application
+        displayName: "Archive Python Application"
+        inputs:
+          rootFolderOrFile: "$(Build.SourcesDirectory)/app"
+          includeRootFolder: false
+          archiveType: "zip"
+          archiveFile: "$(Build.ArtifactStagingDirectory)/app.zip"
+          replaceExistingArchive: true
+          excludePaths: |
+            .git/**
+            **/__pycache__/**
+            **/*.pyc
+
+      - task: AzureWebApp@1
+        displayName: "Deploy Python Application"
+        inputs:
+          azureSubscription: $(servicePrinciple)
+          appType: "webAppLinux"
+          appName: $(python_web_app_name)
+          resourceGroupName: $(resource_group_name)
+          package: "$(Build.ArtifactStagingDirectory)/app.zip"
+          deploymentMethod: "zipDeploy" 
