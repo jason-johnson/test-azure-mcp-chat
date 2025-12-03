@@ -11,17 +11,18 @@ resource "azurerm_linux_web_app" "python_app" {
 
   site_config {
     application_stack {
-      python_version = "3.11"
+      python_version = "3.14"
     }
 
-    always_on = false
+    app_command_line = "gunicorn -w 2 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8080 agent:app"
   }
+
 
   app_settings = {
     "APPLICATIONINSIGHTS_CONNECTION_STRING" = azurerm_application_insights.main.connection_string
-    "AZURE_OPENAI_ENDPOINT" = azurerm_cognitive_account.openai.endpoint
-    "AZURE_OPENAI_DEPLOYMENT_NAME" = azurerm_cognitive_deployment.model.name
-    "MCP_URL" = "http://${azurerm_linux_web_app.mcp_app.default_hostname}"
+    "AZURE_OPENAI_ENDPOINT"                 = azurerm_cognitive_account.openai.endpoint
+    "AZURE_OPENAI_DEPLOYMENT_NAME"          = azurerm_cognitive_deployment.model.name
+    "MCP_URL"                               = "http://${azurerm_linux_web_app.mcp_app.default_hostname}"
   }
 
   logs {
