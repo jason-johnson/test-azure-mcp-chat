@@ -5,6 +5,10 @@ resource "azurerm_linux_web_app" "python_app" {
   location            = azurerm_service_plan.main.location
   service_plan_id     = azurerm_service_plan.main.id
 
+  tags = {
+    "hidden-link:/app-insights-resource-id" = azurerm_application_insights.main.id
+  }
+
   identity {
     type = "SystemAssigned"
   }
