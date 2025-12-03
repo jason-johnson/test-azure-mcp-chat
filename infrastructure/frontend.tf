@@ -19,6 +19,9 @@ resource "azurerm_linux_web_app" "python_app" {
 
   app_settings = {
     "APPLICATIONINSIGHTS_CONNECTION_STRING" = azurerm_application_insights.main.connection_string
+    "AZURE_OPENAI_ENDPOINT" = azurerm_cognitive_account.openai.endpoint
+    "AZURE_OPENAI_DEPLOYMENT_NAME" = azurerm_cognitive_deployment.model.name
+    "MCP_URL" = "http://${azurerm_linux_web_app.mcp_app.default_hostname}"
   }
 
   logs {
