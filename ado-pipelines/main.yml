@@ -41,13 +41,14 @@ jobs:
             TF_VAR_acr_branches: ${{ parameters.acrTaskBranches }}
 
   - job: DeployPythonApp
-    displayName: "Deploy Python Application
+    displayName: "Deploy Python Application"
     dependsOn: Terraform
     variables:
-          python_web_app_name: $[ dependencies.terraform.outputs['Terraform.python_web_app_name'] ]
-          resource_group_name: $[ dependencies.terraform.outputs['Terraform.resource_group_name'] ]
+      python_web_app_name: $[ dependencies.terraform.outputs['Terraform.python_web_app_name'] ]
+      resource_group_name: $[ dependencies.terraform.outputs['Terraform.resource_group_name'] ]
     steps:
-      - task: ArchiveFiles@2  # Package Python application
+      # Package Python application
+      - task: ArchiveFiles@2
         displayName: "Archive Python Application"
         inputs:
           rootFolderOrFile: "$(Build.SourcesDirectory)/app"
