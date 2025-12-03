@@ -58,4 +58,10 @@ resource "azurerm_linux_web_app" "mcp_app" {
       }
     }
   }
+
+  lifecycle {
+    ignore_changes = [ 
+      tags["hidden-link: /app-insights-resource-id"]
+     ]
+  }
 }
