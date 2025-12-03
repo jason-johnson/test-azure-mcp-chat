@@ -6,7 +6,6 @@ from dotenv import load_dotenv
 
 from fastapi import FastAPI, Request, Form
 from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
 from semantic_kernel.agents.chat_completion.chat_completion_agent import ChatCompletionAgent, ChatHistoryAgentThread
 from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
 from semantic_kernel.contents.chat_message_content import ChatMessageContent
@@ -59,9 +58,6 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
-
-# Mount static files directory to serve assets like images, CSS, JS files
-app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Maintain chat history per context
 chat_history_store: dict[str, ChatHistory] = {}
