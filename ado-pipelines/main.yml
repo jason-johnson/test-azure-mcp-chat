@@ -44,8 +44,8 @@ jobs:
     displayName: "Deploy Python Application"
     dependsOn: Terraform
     variables:
-      python_web_app_name: $[ dependencies.terraform.outputs['Terraform.python_web_app_name'] ]
-      resource_group_name: $[ dependencies.terraform.outputs['Terraform.resource_group_name'] ]
+      python_web_app_name: $[ dependencies.Terraform.outputs['Terraform.python_web_app_name'] ]
+      resource_group_name: $[ dependencies.Terraform.outputs['Terraform.resource_group_name'] ]
     steps:
       # Package Python application
       - task: ArchiveFiles@2
