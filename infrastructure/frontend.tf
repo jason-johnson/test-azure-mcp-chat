@@ -27,6 +27,7 @@ resource "azurerm_linux_web_app" "python_app" {
     "AZURE_OPENAI_ENDPOINT"                 = azurerm_cognitive_account.openai.endpoint
     "AZURE_OPENAI_DEPLOYMENT_NAME"          = azurerm_cognitive_deployment.model.name
     "MCP_URL"                               = "http://${azurerm_linux_web_app.mcp_app.default_hostname}"
+    "SCM_DO_BUILD_DURING_DEPLOYMENT"        = "true"
   }
 
   logs {
