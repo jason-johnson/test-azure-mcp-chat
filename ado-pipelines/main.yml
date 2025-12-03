@@ -57,8 +57,8 @@ jobs:
           archiveFile: "$(Build.ArtifactStagingDirectory)/app.zip"
           replaceExistingArchive: true
           excludePaths: |
-            uv.lock
-            pyproject.toml
+            **/uv.lock
+            **/pyproject.toml
             .git/**
             **/__pycache__/**
             **/*.pyc
