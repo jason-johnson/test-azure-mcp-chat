@@ -5,10 +5,6 @@ resource "azurerm_linux_web_app" "python_app" {
   location            = azurerm_service_plan.main.location
   service_plan_id     = azurerm_service_plan.main.id
 
-  tags = {
-    "hidden-link: /app-insights-resource-id" = azurerm_application_insights.main.id
-  }
-
   identity {
     type = "SystemAssigned"
   }
@@ -22,11 +18,22 @@ resource "azurerm_linux_web_app" "python_app" {
   }
 
   app_settings = {
-    "APPLICATIONINSIGHTS_CONNECTION_STRING" = azurerm_application_insights.main.connection_string
-    "AZURE_OPENAI_ENDPOINT"                 = azurerm_cognitive_account.openai.endpoint
-    "AZURE_OPENAI_DEPLOYMENT_NAME"          = azurerm_cognitive_deployment.model.name
-    "MCP_URL"                               = "http://${azurerm_linux_web_app.mcp_app.default_hostname}"
-    "SCM_DO_BUILD_DURING_DEPLOYMENT"        = "true"
+    "APPLICATIONINSIGHTS_CONNECTION_STRING"           = azurerm_application_insights.main.connection_string
+    "AZURE_OPENAI_ENDPOINT"                           = azurerm_cognitive_account.openai.endpoint
+    "AZURE_OPENAI_DEPLOYMENT_NAME"                    = azurerm_cognitive_deployment.model.name
+    "MCP_URL"                                         = "http://${azurerm_linux_web_app.mcp_app.default_hostname}"
+    "SCM_DO_BUILD_DURING_DEPLOYMENT"                  = "true"
+    "APPINSIGHTS_INSTRUMENTATIONKEY"                  = azurerm_application_insights.main.instrumentation_key
+    "APPINSIGHTS_PROFILERFEATURE_VERSION"             = "1.0.0"
+    "APPINSIGHTS_SNAPSHOTFEATURE_VERSION"             = "1.0.0"
+    "ApplicationInsightsAgent_EXTENSION_VERSION"      = "~3"
+    "DiagnosticServices_EXTENSION_VERSION"            = "~3"
+    "InstrumentationEngine_EXTENSION_VERSION"         = "disabled"
+    "SnapshotDebugger_EXTENSION_VERSION"              = "disabled"
+    "XDT_MicrosoftApplicationInsights_BaseExtensions" = "disabled"
+    "XDT_MicrosoftApplicationInsights_Mode"           = "recommended"
+    "XDT_MicrosoftApplicationInsights_PreemptSdk"     = "disabled"
+    "WEBSITES_PORT"                                   = "8080"
   }
 
   logs {
@@ -43,5 +50,11 @@ resource "azurerm_linux_web_app" "python_app" {
         retention_in_mb   = 35
       }
     }
+  }
+
+  lifecycle {
+    ignore_changes = [
+      tags["hidden-link: /app-insights-resource-id"]
+    ]
   }
 }
