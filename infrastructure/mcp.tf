@@ -146,7 +146,7 @@ resource "azuread_application" "mcp" {
   }
 
   web {
-    redirect_uris = ["https://${azurerm_linux_web_app.mcp_app.default_hostname}/.auth/login/aad/callback"]
+    redirect_uris = ["https://${local.mcp_app_name}.azurewebsites.net/.auth/login/aad/callback"]
 
     implicit_grant {
       id_token_issuance_enabled = true
