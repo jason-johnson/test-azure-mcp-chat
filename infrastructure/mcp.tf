@@ -23,6 +23,8 @@ resource "azurerm_linux_web_app" "mcp_app" {
       docker_registry_url = "https://mcr.microsoft.com"
     }
 
+    app_command_line = "--transport http --outgoing-auth-strategy UseHostingEnvironmentIdentity --mode all --read-only"
+
     always_on = false
   }
 
@@ -58,8 +60,8 @@ resource "azurerm_linux_web_app" "mcp_app" {
   }
 
   lifecycle {
-    ignore_changes = [ 
+    ignore_changes = [
       tags["hidden-link: /app-insights-resource-id"]
-     ]
+    ]
   }
 }
