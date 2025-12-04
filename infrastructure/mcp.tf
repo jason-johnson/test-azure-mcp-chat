@@ -31,6 +31,22 @@ resource "azurerm_linux_web_app" "mcp_app" {
     always_on = false
   }
 
+  auth_settings_v2 {
+    auth_enabled           = true
+    default_provider       = "azureactivedirectory"
+    require_authentication = true
+
+    active_directory_v2 {
+      client_id                  = azuread_application.mcp.client_id
+      client_secret_setting_name = "MICROSOFT_PROVIDER_AUTHENTICATION_SECRET"
+      tenant_auth_endpoint       = "https://sts.windows.net/${data.azuread_client_config.current.tenant_id}/v2.0"
+    }
+
+    login {
+      token_store_enabled = true
+    }
+  }
+
   app_settings = merge({
     "WEBSITES_ENABLE_APP_SERVICE_STORAGE"             = "false"
     "ASPNETCORE_ENVIRONMENT"                          = "Production"
@@ -44,6 +60,8 @@ resource "azurerm_linux_web_app" "mcp_app" {
     "AZURE_LOG_LEVEL"                                 = "Verbose"
     "AZURE_MCP_DANGEROUSLY_DISABLE_HTTPS_REDIRECTION" = "true"
     "WEBSITES_PORT"                                   = "8080"
+    "WEBSITE_AUTH_AAD_ALLOWED_TENANTS"                = data.azuread_client_config.current.tenant_id
+    "MICROSOFT_PROVIDER_AUTHENTICATION_SECRET"        = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.mcp_secret.id})"
   }, local.app_insights_app_settings)
 
   logs {
