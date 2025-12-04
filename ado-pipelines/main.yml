@@ -24,7 +24,7 @@ pool:
 
 jobs:
   - job: Terraform
-    displayName: "infrastructure deployment"
+    displayName: "Infrastructure Deployment"
     steps:
       - template: terraform.yml
         parameters:
