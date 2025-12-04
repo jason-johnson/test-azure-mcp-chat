@@ -10,3 +10,7 @@ resource "azurerm_service_plan" "main" {
   os_type             = "Linux"
   sku_name            = "B1"
 }
+
+resource "time_rotating" "main" {
+  rotation_days = 60
+}

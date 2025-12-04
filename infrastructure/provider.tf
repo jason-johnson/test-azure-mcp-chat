@@ -12,6 +12,14 @@ terraform {
       source  = "jason-johnson/namep"
       version = "~> 2.2.0"
     }
+    azuread = {
+      source  = "hashicorp/azuread"
+      version = "~> 3.1.0"
+    }
+    random = {
+      source = "hashicorp/random"
+      version = "~> 3.7.1"
+    }
   }
 }
 
