@@ -26,8 +26,7 @@ resource "azurerm_linux_web_app" "mcp_app" {
     always_on = false
   }
 
-  app_settings = {
-    "APPLICATIONINSIGHTS_CONNECTION_STRING"           = azurerm_application_insights.main.connection_string
+  app_settings = merge({
     "WEBSITES_ENABLE_APP_SERVICE_STORAGE"             = "false"
     "ASPNETCORE_ENVIRONMENT"                          = "Production"
     "ASPNETCORE_URLS"                                 = "http://+:8080"
@@ -40,8 +39,7 @@ resource "azurerm_linux_web_app" "mcp_app" {
     "AZURE_LOG_LEVEL"                                 = "Verbose"
     "AZURE_MCP_DANGEROUSLY_DISABLE_HTTPS_REDIRECTION" = "true"
     "WEBSITES_PORT"                                   = "8080"
-
-  }
+  }, local.app_insights_app_settings)
 
   logs {
     detailed_error_messages = true
