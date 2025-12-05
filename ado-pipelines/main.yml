@@ -11,6 +11,9 @@ parameters:
     default: false
     type: boolean
 
+pool:
+  name: 'jasojohnson-mcaps'
+
 variables:
   - template: variables.yml
   - name: saltVar
