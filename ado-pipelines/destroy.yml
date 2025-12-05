@@ -7,9 +7,6 @@ parameters:
     default: false
     type: boolean
 
-pool:
-  name: 'jasojohnson-mcaps'
-
 variables:
   - template: variables.yml
   - name: saltVar
@@ -19,7 +16,7 @@ variables:
       value: ''
 
 pool:
-  vmImage: 'ubuntu-latest'
+  name: 'jasojohnson-mcaps'
 
 steps:
   - template: terraform.yml
