@@ -1,5 +1,6 @@
 locals {
   mcp_app_name = provider::namep::namestring("azurerm_linux_web_app", local.namep_config, { name = "mcp" })
+  mcp_role_id  = uuidv5("dns", "Mcp.Tools.ReadWrite.All")
 }
 # User Managed Identity for MCP app
 resource "azurerm_user_assigned_identity" "mcp_app" {
@@ -118,7 +119,7 @@ resource "azuread_application" "mcp" {
     value                = "Mcp.Tools.ReadWrite.All"
     enabled              = true
 
-    id = uuidv5("dns", "Mcp.Tools.ReadWrite.All")
+    id = local.mcp_role_id
   }
   feature_tags {
     enterprise = true
@@ -156,14 +157,15 @@ resource "azuread_application" "mcp" {
   }
 }
 
-/* resource "azuread_application_pre_authorized" "mcp" {
+resource "azuread_application_pre_authorized" "mcp" {
   application_id       = azuread_application.mcp.id
-  authorized_client_id = azuread_application.frontend.client_id
+  authorized_client_id = azuread_application.fe.client_id
 
   permission_ids = [
     random_uuid.fe_user_impersonation_id.result,
+    local.mcp_role_id,
   ]
-} */
+}
 
 resource "azuread_application_identifier_uri" "mcp" {
   application_id = azuread_application.mcp.id

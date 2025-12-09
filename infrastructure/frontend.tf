@@ -1,6 +1,11 @@
 # Python Web App for the agent code
+
+locals {
+  frontend_app_name = provider::namep::namestring("azurerm_linux_web_app", local.namep_config, { name = "fe" })
+}
+
 resource "azurerm_linux_web_app" "python_app" {
-  name                = provider::namep::namestring("azurerm_linux_web_app", local.namep_config, { name = "fe" })
+  name                = local.frontend_app_name
   resource_group_name = azurerm_resource_group.main.name
   location            = azurerm_service_plan.main.location
   service_plan_id     = azurerm_service_plan.main.id
@@ -49,4 +54,73 @@ resource "azurerm_linux_web_app" "python_app" {
       tags["hidden-link: /app-insights-resource-id"]
     ]
   }
+}
+
+resource "azuread_application" "fe" {
+  display_name = provider::namep::namestring("azuread_application", local.namep_config, { name = "fe" })
+  owners       = [data.azuread_client_config.current.object_id]
+
+  api {
+    mapped_claims_enabled = true
+  }
+
+  feature_tags {
+    enterprise = true
+    gallery    = true
+  }
+
+  required_resource_access {
+    resource_app_id = azuread_application.backend.client_id
+    resource_access {
+      id   = random_uuid.fe_user_impersonation_id.result
+      type = "Scope"
+    }
+
+    resource_access {
+      id   = local.mcp_role_id
+      type = "Role"
+    }
+  }
+
+  web {
+    redirect_uris = ["https://${local.frontend_app_name}.azurewebsites.net/.auth/login/aad/callback"]
+
+    implicit_grant {
+      id_token_issuance_enabled = true
+    }
+  }
+
+  lifecycle {
+    ignore_changes = [
+      # This parameter is managed by `azuread_application_identifier_uri`.
+      # Details: https://github.com/hashicorp/terraform-provider-azuread/issues/428#issuecomment-1788737766
+      identifier_uris,
+    ]
+  }
+}
+
+resource "azuread_application_identifier_uri" "fe" {
+  application_id = azuread_application.fe.id
+  identifier_uri = "api://${azuread_application.fe.client_id}"
+  depends_on     = [azuread_service_principal.fe]
+}
+
+resource "azuread_application_password" "fe" {
+  application_id = azuread_application.fe.id
+  rotate_when_changed = {
+    rotation = time_rotating.main.id
+  }
+}
+
+resource "azurerm_key_vault_secret" "fe_secret" {
+  name         = "fe-entra-app-secret"
+  key_vault_id = azurerm_key_vault.main.id
+  value        = azuread_application_password.fe.value
+
+  depends_on = [azurerm_role_assignment.managed_admin, azurerm_role_assignment.managed_secrets]
+}
+
+resource "azuread_service_principal" "fe" {
+  client_id = azuread_application.fe.client_id
+  owners    = [data.azuread_client_config.current.object_id]
 }
