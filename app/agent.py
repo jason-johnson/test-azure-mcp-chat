@@ -1,6 +1,5 @@
 import os
 import logging
-from uuid import uuid4
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 
@@ -8,9 +7,8 @@ from fastapi import FastAPI, Request, Form, Header
 from fastapi.responses import HTMLResponse
 from semantic_kernel.agents.chat_completion.chat_completion_agent import ChatCompletionAgent, ChatHistoryAgentThread
 from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
-from semantic_kernel.contents.chat_message_content import ChatMessageContent
 from semantic_kernel.contents.chat_history import ChatHistory
-from semantic_kernel.contents import AuthorRole
+
 from azure.identity.aio import DefaultAzureCredential
 
 from semantic_kernel import Kernel
@@ -23,15 +21,6 @@ from datetime import datetime
 
 # Load environment variables
 load_dotenv()
-
-# Print immediate startup info to stdout (will appear in logs immediately)
-print("=== STARTING APPLICATION ===")
-print(f"Python version: {os.sys.version}")
-print(f"Current working directory: {os.getcwd()}")
-print(f"Environment variables loaded: {len(os.environ)}")
-print(f"MCP_URL: {os.getenv('MCP_URL', 'NOT_SET')}")
-print(f"AZURE_OPENAI_ENDPOINT: {os.getenv('AZURE_OPENAI_ENDPOINT', 'NOT_SET')[:50]}...")
-print("=== CONFIGURING LOGGING ===")
 
 # Configure logging to provide maximum visibility for debugging
 logging.basicConfig(
@@ -72,51 +61,66 @@ user_plugins: dict[str, MCPStreamableHttpPlugin] = {}
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    print("=== LIFESPAN STARTUP BEGIN ===")
     global azure_creds
     logger.info("=== APPLICATION STARTUP BEGINNING ===")
     try:
-        print("About to create Azure credentials...")
         logger.debug("Initializing Azure credentials...")
         azure_creds = DefaultAzureCredential()
-        print("Azure credentials created!")
         logger.info("Azure credentials created successfully")
         
         # Note: init_chat will be called lazily per user on first request
         logger.info("=== APPLICATION STARTUP COMPLETED ===")
-        print("=== LIFESPAN STARTUP COMPLETE ===")
 
     except Exception as e:
-        print(f"ERROR in lifespan startup: {e}")
         logger.error(f"Failed to initialize Azure credentials: {e}", exc_info=True)
         raise
 
-    print("=== LIFESPAN YIELDING ===")
+    logger.info("FastAPI app is now ready to serve requests")
     yield
     
     # Shutdown
-    print("=== LIFESPAN SHUTDOWN BEGIN ===")
     logger.info("=== APPLICATION SHUTDOWN BEGINNING ===")
     logger.info("=== APPLICATION SHUTDOWN COMPLETED ===")
-    print("=== LIFESPAN SHUTDOWN COMPLETE ===")
 
 
-print("=== CREATING FASTAPI APP ===")
 app = FastAPI(lifespan=lifespan)
-print("=== FASTAPI APP CREATED ===")
 
-# Add immediate simple endpoints that don't require any dependencies
+# Add middleware to log all requests
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    logger.info(f"Incoming request: {request.method} {request.url}")
+    logger.debug(f"Request headers: {dict(request.headers)}")
+    
+    response = await call_next(request)
+    
+    logger.info(f"Response: {response.status_code}")
+    return response
+
+@app.get("/")
+async def root():
+    """Root endpoint - simplest possible"""
+    logger.info("Root endpoint accessed")
+    return "Azure MCP Chat Agent is running!"
+
+@app.get("/simple")
+def simple():
+    """Simplest sync endpoint"""
+    logger.info("Simple endpoint accessed")
+    return "OK"
+
 @app.get("/ping")
 async def ping():
     """Simplest possible endpoint to test if the app is responding"""
+    logger.info("Ping endpoint accessed")
     return {"status": "pong", "timestamp": datetime.utcnow().isoformat()}
 
 @app.get("/alive")
 def alive():
     """Synchronous endpoint to test basic functionality"""
+    logger.info("Alive endpoint accessed")
     return {"status": "alive", "pid": os.getpid()}
 
-print("=== SIMPLE ENDPOINTS ADDED ===")
+
 
 # Maintain persistent agent threads per context
 user_threads: dict[str, ChatHistoryAgentThread] = {}
@@ -329,15 +333,19 @@ async def chat(
 async def health_check():
     """Health check endpoint for debugging"""
     logger.info("=== HEALTH CHECK REQUEST ===")
-    return {
-        "status": "healthy",
-        "timestamp": datetime.utcnow().isoformat() + "Z",
-        "azure_creds": "initialized" if azure_creds else "not_initialized",
-        "user_agents_count": len(user_agents),
-        "user_threads_count": len(user_threads),
-        "mcp_url": os.getenv('MCP_URL', 'not_set'),
-        "openai_endpoint": os.getenv('AZURE_OPENAI_ENDPOINT', 'not_set')[:50] + "..." if os.getenv('AZURE_OPENAI_ENDPOINT') else 'not_set'
-    }
+    try:
+        return {
+            "status": "healthy",
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "azure_creds": "initialized" if azure_creds else "not_initialized",
+            "user_agents_count": len(user_agents),
+            "user_threads_count": len(user_threads),
+            "mcp_url": os.getenv('MCP_URL', 'not_set'),
+            "openai_endpoint": os.getenv('AZURE_OPENAI_ENDPOINT', 'not_set')[:50] + "..." if os.getenv('AZURE_OPENAI_ENDPOINT') else 'not_set'
+        }
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return {"status": "error", "error": str(e)}
 
 
 @app.get("/debug/test-auth")
@@ -384,7 +392,7 @@ async def test_agent_creation():
         }
 
 
-@app.get("/", response_class=HTMLResponse)
+@app.get("/index", response_class=HTMLResponse)
 async def index(request: Request):
     try:
         with open("index.html", "r", encoding="utf-8") as f:
