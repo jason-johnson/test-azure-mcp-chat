@@ -163,7 +163,6 @@ resource "azuread_application_pre_authorized" "mcp" {
 
   permission_ids = [
     random_uuid.fe_user_impersonation_id.result,
-    local.mcp_role_id,
   ]
 }
 
