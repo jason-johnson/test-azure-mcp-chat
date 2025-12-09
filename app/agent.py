@@ -11,15 +11,11 @@ from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
 from semantic_kernel.contents.chat_message_content import ChatMessageContent
 from semantic_kernel.contents.chat_history import ChatHistory
 from semantic_kernel.contents import AuthorRole
-from semantic_kernel.contents.annotation_content import AnnotationContent
-from semantic_kernel.functions.kernel_function_decorator import kernel_function
 from azure.identity.aio import DefaultAzureCredential
 
-from semantic_kernel.agents import AzureAIAgent, AzureAIAgentThread
-from azure.ai.projects.aio import AIProjectClient
-from azure.ai.agents.models import BingGroundingTool
 from semantic_kernel import Kernel
-from semantic_kernel.connectors.mcp import MCPSsePlugin, MCPStdioPlugin
+from semantic_kernel.connectors.mcp import MCPStreamableHttpPlugin
+from semantic_kernel.filters import FunctionInvocationContext
 
 # Load environment variables
 load_dotenv()
@@ -33,27 +29,28 @@ azure_mcp = None
 agent = None
 azure_plugin = None
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
     global azure_creds, azure_ai_client, bing_grounding, search_agent, azure_mcp
     logger.info("Initializing Azure credentials and client...")
     try:
-        
+
         logger.info("Creating Azure credentials...")
         azure_creds = DefaultAzureCredential()
-                        
+
         await init_chat()
 
     except Exception as e:
         logger.error(f"Failed to initialize Azure resources: {e}")
-        logger.error(f"Search functionality will be unavailable. Error details: {type(e).__name__}: {str(e)}")
+        logger.error(
+            f"Search functionality will be unavailable. Error details: {type(e).__name__}: {str(e)}")
         # Set search_agent to None explicitly to make it clear it failed
         search_agent = None
 
-    
     yield
-      # Shutdown       
+    # Shutdown
     logger.info("Shutting down...")
 
 
@@ -62,41 +59,40 @@ app = FastAPI(lifespan=lifespan)
 # Maintain chat history per context
 chat_history_store: dict[str, ChatHistory] = {}
 
+# Function invocation filter to log function calls and responses
+
+
+async def function_invocation_filter(context: FunctionInvocationContext, next):
+    """A filter that will be called for each function call in the response."""
+    if "messages" not in context.arguments:
+        await next(context)
+        return
+    print(
+        f"    Agent [{context.function.name}] called with messages: {context.arguments['messages']}")
+    await next(context)
+    print(
+        f"    Response from agent [{context.function.name}]: {context.result.value}")
 
 
 async def init_chat():
-    # 1. Create the agent
-    #async with MCPStdioPlugin(
-    #    name="AzurePlugin",
-    #    description="Azure Resources Plugin",
-    #    command="npx",
-    #    load_tools=True,
-    #    args=["-y", "@azure/mcp@latest", "server", "start"]
-    #) as azure_plugin:
-
     global agent, azure_plugin
-    azure_plugin =  MCPSsePlugin(name="AzurePlugin",
-                        description="Azure Resources Plugin",
-                        load_prompts=False,
-                        url=os.getenv('MCP_URL', 'http://localhost:5008/sse'))
-    #azure_plugin = MCPStdioPlugin(
-    #   name="AzurePlugin",
-    #    description="Azure Resources Plugin",
-    #    command="npx",
-    #    load_tools=True,
-    #    args=["-y", "@azure/mcp@latest", "server", "start"])
+    azure_plugin = MCPStreamableHttpPlugin(name="AzurePlugin",
+                                           description="Azure Resources Plugin",
+                                           load_prompts=False,
+                                           url=os.getenv('MCP_URL', 'http://localhost:5008'))
+
     await azure_plugin.connect()
     kernel = Kernel()
-    kernel.add_plugin(azure_plugin)
-        # Add Azure OpenAI chat completion
+    kernel.add_filter("function_invocation", function_invocation_filter)
+
+    # Add Azure OpenAI chat completion
     chat_completion = AzureChatCompletion(
         api_key=os.getenv('AZURE_OPENAI_API_KEY'),
         endpoint=os.getenv('AZURE_OPENAI_ENDPOINT'),
         deployment_name=os.getenv('AZURE_OPENAI_DEPLOYMENT_NAME'),
         api_version="2024-12-01-preview",
+        azure_credential=azure_creds
     )
-    kernel.add_service(chat_completion)
-    
 
     agent = ChatCompletionAgent(
         kernel=kernel,
@@ -119,7 +115,8 @@ async def init_chat():
 
 @app.post("/chat")
 async def chat(user_input: str = Form(...), context_id: str = Form("default")):
-    logger.info(f"Received chat request: {user_input} with context ID: {context_id}")
+    logger.info(
+        f"Received chat request: {user_input} with context ID: {context_id}")
     await azure_plugin.connect()
     # Get or create ChatHistory for the context
     chat_history = chat_history_store.get(context_id)
@@ -129,20 +126,24 @@ async def chat(user_input: str = Form(...), context_id: str = Form("default")):
             system_message="You are a helpful assistant.",
         )
         chat_history_store[context_id] = chat_history
-        logger.info(f"Created new ChatHistory for context ID: {context_id}")    # Add user input to chat history
-    chat_history.messages.append(ChatMessageContent(role=AuthorRole.USER, content=user_input))
+        # Add user input to chat history
+        logger.info(f"Created new ChatHistory for context ID: {context_id}")
+    chat_history.messages.append(ChatMessageContent(
+        role=AuthorRole.USER, content=user_input))
 
     # Create a new thread from the chat history
-    thread = ChatHistoryAgentThread(chat_history=chat_history, thread_id=str(uuid4()))
+    thread = ChatHistoryAgentThread(
+        chat_history=chat_history, thread_id=str(uuid4()))
 
     # Get response from the agent
-    response = await agent.get_response(message=user_input, thread=thread)    # Add assistant response to chat history
-    chat_history.messages.append(ChatMessageContent(role=AuthorRole.ASSISTANT, content=response.content.content))
+    # Add assistant response to chat history
+    response = await agent.get_response(message=user_input, thread=thread)
+    chat_history.messages.append(ChatMessageContent(
+        role=AuthorRole.ASSISTANT, content=response.content.content))
 
     logger.info(f"response: {response.content.content}")
 
-    return {"response": response.content.content}   
-
+    return {"response": response.content.content}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -152,7 +153,8 @@ async def index(request: Request):
             html_content = f.read()
         return HTMLResponse(content=html_content)
     except FileNotFoundError:
-        logger.error("index.html file not found. Please ensure it exists in the current directory.")
+        logger.error(
+            "index.html file not found. Please ensure it exists in the current directory.")
         return HTMLResponse(content="<h1>Error: index.html not found</h1>", status_code=404)
 
 if __name__ == '__main__':
