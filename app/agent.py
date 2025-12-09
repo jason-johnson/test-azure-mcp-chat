@@ -16,6 +16,8 @@ from azure.identity.aio import DefaultAzureCredential
 from semantic_kernel import Kernel
 from semantic_kernel.connectors.mcp import MCPStreamableHttpPlugin
 from semantic_kernel.filters import FunctionInvocationContext
+import asyncio
+from datetime import datetime, timedelta
 
 # Load environment variables
 load_dotenv()
@@ -49,12 +51,15 @@ user_plugins: dict[str, MCPStreamableHttpPlugin] = {}
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    global azure_creds, azure_ai_client, bing_grounding, search_agent, azure_mcp
+    global azure_creds
     logger.info("Initializing Azure credentials and client...")
     try:
-
         logger.info("Creating Azure credentials...")
         azure_creds = DefaultAzureCredential()
+        
+        # Start cleanup task
+        cleanup_task = asyncio.create_task(cleanup_old_threads())
+        logger.info("Started background cleanup task for old threads")
         
         # Note: init_chat will be called lazily per user on first request
 
@@ -62,14 +67,27 @@ async def lifespan(app: FastAPI):
         logger.error(f"Failed to initialize Azure credentials: {e}")
 
     yield
+    
     # Shutdown
     logger.info("Shutting down...")
+    # Cancel cleanup task
+    if 'cleanup_task' in locals():
+        cleanup_task.cancel()
+        try:
+            await cleanup_task
+        except asyncio.CancelledError:
+            logger.info("Cleanup task cancelled successfully")
 
 
 app = FastAPI(lifespan=lifespan)
 
-# Maintain chat history per context
-chat_history_store: dict[str, ChatHistory] = {}
+# Maintain persistent agent threads per context
+user_threads: dict[str, ChatHistoryAgentThread] = {}
+user_thread_timestamps: dict[str, datetime] = {}
+
+# Cleanup configuration
+THREAD_CLEANUP_INTERVAL = 3600  # 1 hour in seconds
+THREAD_MAX_AGE = 24 * 3600  # 24 hours in seconds
 
 # Function invocation filter to log function calls and responses
 
@@ -79,11 +97,53 @@ async def function_invocation_filter(context: FunctionInvocationContext, next):
     if "messages" not in context.arguments:
         await next(context)
         return
-    print(
+    logger.info(
         f"    Agent [{context.function.name}] called with messages: {context.arguments['messages']}")
     await next(context)
-    print(
+    logger.info(
         f"    Response from agent [{context.function.name}]: {context.result.value}")
+
+
+async def ensure_mcp_connection(plugin: MCPStreamableHttpPlugin, user_id: str):
+    """Ensure MCP connection is active with retry logic"""
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            await plugin.connect()
+            return True
+        except Exception as e:
+            logger.warning(f"MCP connection attempt {attempt + 1} failed for user {user_id}: {e}")
+            if attempt == max_retries - 1:
+                logger.error(f"Failed to establish MCP connection for user {user_id} after {max_retries} attempts")
+                raise
+            await asyncio.sleep(1)  # Brief delay before retry
+    return False
+
+
+async def cleanup_old_threads():
+    """Background task to cleanup old unused threads"""
+    while True:
+        try:
+            await asyncio.sleep(THREAD_CLEANUP_INTERVAL)
+            current_time = datetime.utcnow()
+            
+            # Find threads older than MAX_AGE
+            threads_to_remove = [
+                thread_key for thread_key, timestamp in user_thread_timestamps.items()
+                if current_time - timestamp > timedelta(seconds=THREAD_MAX_AGE)
+            ]
+            
+            # Remove old threads
+            for thread_key in threads_to_remove:
+                if thread_key in user_threads:
+                    del user_threads[thread_key]
+                if thread_key in user_thread_timestamps:
+                    del user_thread_timestamps[thread_key]
+                logger.info(f"Cleaned up old thread: {thread_key}")
+                
+        except Exception as e:
+            logger.error(f"Error in cleanup task: {e}")
+            await asyncio.sleep(60)  # Wait before retrying
 
 
 async def init_chat(user_token: str, user_id: str) -> tuple[ChatCompletionAgent, MCPStreamableHttpPlugin]:
@@ -111,8 +171,11 @@ async def init_chat(user_token: str, user_id: str) -> tuple[ChatCompletionAgent,
 
     kernel = Kernel()
     kernel.add_filter("function_invocation", function_invocation_filter)
+    
+    # Add the Azure MCP plugin to the kernel so the agent can access its functions
+    kernel.add_plugin(azure_plugin)
 
-    # Add Azure OpenAI chat completion
+    # Add Azure OpenAI chat completion with better error handling
     chat_completion = AzureChatCompletion(
         api_key=os.getenv('AZURE_OPENAI_API_KEY'),
         endpoint=os.getenv('AZURE_OPENAI_ENDPOINT'),
@@ -120,24 +183,34 @@ async def init_chat(user_token: str, user_id: str) -> tuple[ChatCompletionAgent,
         api_version="2024-12-01-preview",
         azure_credential=azure_creds
     )
+    
+    # Define comprehensive SRE instructions
+    sre_instructions = """
+Role: Azure Service Reliability Engineer (SRE)
+
+You are an expert Azure SRE responsible for:
+- Investigating and resolving incidents and outages
+- Responding to monitoring alerts with actionable insights
+- Proactively identifying potential issues
+- Providing technical guidance to the SRE team
+- Executing Azure operations directly when requested
+
+Behavior Guidelines:
+1. Always use available tools to gather data before providing answers
+2. When users ask about Azure tasks, execute them directly rather than providing instructions
+3. Provide clear, actionable recommendations based on data
+4. Include relevant metrics, logs, or configuration details in your responses
+5. Prioritize system reliability and security in all recommendations
+
+Use your Azure tools to investigate, analyze, and take action as appropriate.
+"""
 
     agent = ChatCompletionAgent(
         kernel=kernel,
         service=chat_completion,
         name="SREAgent",
-        plugins=[azure_plugin],
-        instructions="""
-    Role Definition:
-
-    You are acting as a Azure Service Reliability Engineer (SRE).
-    You provide help to solve and prevent incidents and outages.
-    
-    You react into monitoring alerts, or questions from the SRE team.
-    Use tools to investigate incidents, gather data, and provide answers.
-
-    If use asks about azure related tasks, intention is that you execute them and not give users instructions to do so (unless specially asked)
-
-    """)
+        instructions=sre_instructions
+    )
     
     # Cache the agent and plugin for this user
     user_agents[user_key] = agent
@@ -156,37 +229,46 @@ async def chat(
     logger.info(
         f"Received chat request: {user_input} with context ID: {context_id} for user: {x_ms_client_principal_id}")
     
-    # Get or create agent for this user (singleton pattern using Azure user ID)
-    agent, azure_plugin = await init_chat(x_ms_token_aad_access_token, x_ms_client_principal_id)
-    
-    # Ensure connection is active
-    await azure_plugin.connect()
-    # Get or create ChatHistory for the context
-    chat_history = chat_history_store.get(context_id)
-    if chat_history is None:
-        chat_history = ChatHistory(
-            messages=[],
-            system_message="You are a helpful assistant.",
-        )
-        chat_history_store[context_id] = chat_history
-        # Add user input to chat history
-        logger.info(f"Created new ChatHistory for context ID: {context_id}")
-    chat_history.messages.append(ChatMessageContent(
-        role=AuthorRole.USER, content=user_input))
-
-    # Create a new thread from the chat history
-    thread = ChatHistoryAgentThread(
-        chat_history=chat_history, thread_id=str(uuid4()))
-
-    # Get response from the agent
-    # Add assistant response to chat history
-    response = await agent.get_response(message=user_input, thread=thread)
-    chat_history.messages.append(ChatMessageContent(
-        role=AuthorRole.ASSISTANT, content=response.content.content))
-
-    logger.info(f"response: {response.content.content}")
-
-    return {"response": response.content.content}
+    try:
+        # Get or create agent for this user (singleton pattern using Azure user ID)
+        agent, azure_plugin = await init_chat(x_ms_token_aad_access_token, x_ms_client_principal_id)
+        
+        # Ensure MCP connection is active with retry logic
+        await ensure_mcp_connection(azure_plugin, x_ms_client_principal_id)
+        
+        # Create a unique thread key combining user and context
+        thread_key = f"{x_ms_client_principal_id}:{context_id}"
+        
+        # Get or create persistent thread for this user/context combination
+        thread = user_threads.get(thread_key)
+        if thread is None:
+            # Create new thread with proper system message from agent
+            chat_history = ChatHistory(
+                messages=[],
+                system_message=agent.instructions
+            )
+            thread = ChatHistoryAgentThread(
+                chat_history=chat_history, 
+                thread_id=thread_key  # Use stable thread ID for persistence
+            )
+            user_threads[thread_key] = thread
+            logger.info(f"Created new persistent thread for {thread_key}")
+        
+        # Update thread timestamp for cleanup tracking
+        user_thread_timestamps[thread_key] = datetime.utcnow()
+        
+        # Get response from the agent - this automatically manages chat history
+        response = await agent.get_response(message=user_input, thread=thread)
+        
+        # Log the response content
+        response_content = response.content if hasattr(response, 'content') else str(response)
+        logger.info(f"SRE Agent response: {response_content[:100]}...")  # Truncate long responses in logs
+        
+        return {"response": response_content}
+        
+    except Exception as e:
+        logger.error(f"Error in chat endpoint: {str(e)}", exc_info=True)
+        return {"response": f"I encountered an error while processing your request. Please try again. Error: {str(e)}", "error": True}
 
 
 @app.get("/", response_class=HTMLResponse)
