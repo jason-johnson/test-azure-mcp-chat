@@ -109,23 +109,14 @@ resource "azuread_application" "mcp" {
   }
 
   app_role {
-    allowed_member_types = ["User", "Application"]
-    description          = "Admins can manage roles and perform all task actions"
-    display_name         = "Admin"
+    allowed_member_types = ["Application"]
+    display_name         = "Azure MCP Tools ReadWrite All"
+    description          = "Application permission for Azure MCP tool calls"
+    value                = "Mcp.Tools.ReadWrite.All"
     enabled              = true
-    id                   = "1b19509b-32b1-4e9f-b71d-4992aa991967"
-    value                = "admin"
-  }
 
-  app_role {
-    allowed_member_types = ["User"]
-    description          = "ReadOnly roles have limited query access"
-    display_name         = "ReadOnly"
-    enabled              = true
-    id                   = "497406e4-012a-4267-bf18-45a1cb148a01"
-    value                = "User"
+    id = uuidv5("dns", "Mcp.Tools.ReadWrite.All")
   }
-
   feature_tags {
     enterprise = true
     gallery    = true
