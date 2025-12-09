@@ -16,8 +16,9 @@ from azure.identity.aio import DefaultAzureCredential
 from semantic_kernel import Kernel
 from semantic_kernel.connectors.mcp import MCPStreamableHttpPlugin
 from semantic_kernel.filters import FunctionInvocationContext
+from fastapi import Depends
+from typing import AsyncGenerator
 import asyncio
-from datetime import datetime, timedelta
 
 # Load environment variables
 load_dotenv()
@@ -57,10 +58,6 @@ async def lifespan(app: FastAPI):
         logger.info("Creating Azure credentials...")
         azure_creds = DefaultAzureCredential()
         
-        # Start cleanup task
-        cleanup_task = asyncio.create_task(cleanup_old_threads())
-        logger.info("Started background cleanup task for old threads")
-        
         # Note: init_chat will be called lazily per user on first request
 
     except Exception as e:
@@ -70,24 +67,50 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     logger.info("Shutting down...")
-    # Cancel cleanup task
-    if 'cleanup_task' in locals():
-        cleanup_task.cancel()
-        try:
-            await cleanup_task
-        except asyncio.CancelledError:
-            logger.info("Cleanup task cancelled successfully")
 
 
 app = FastAPI(lifespan=lifespan)
 
 # Maintain persistent agent threads per context
 user_threads: dict[str, ChatHistoryAgentThread] = {}
-user_thread_timestamps: dict[str, datetime] = {}
 
-# Cleanup configuration
-THREAD_CLEANUP_INTERVAL = 3600  # 1 hour in seconds
-THREAD_MAX_AGE = 24 * 3600  # 24 hours in seconds
+
+async def get_agent_and_thread_dependency(
+    context_id: str = Form("default"),
+    x_ms_client_principal_id: str = Header(..., alias="x-ms-client-principal-id"),
+    x_ms_token_aad_access_token: str = Header(..., alias="x-ms-token-aad-access-token")
+) -> AsyncGenerator[tuple[ChatCompletionAgent, ChatHistoryAgentThread], None]:
+    """FastAPI dependency to get or create agent and thread with automatic cleanup"""
+    
+    # Get or create agent for this user
+    agent, azure_plugin = await init_chat(x_ms_token_aad_access_token, x_ms_client_principal_id)
+    
+    # Ensure MCP connection is active with retry logic
+    await ensure_mcp_connection(azure_plugin, x_ms_client_principal_id)
+    
+    # Create a unique thread key combining user and context
+    thread_key = f"{x_ms_client_principal_id}:{context_id}"
+    
+    # Get or create persistent thread for this user/context combination
+    thread = user_threads.get(thread_key)
+    if thread is None:
+        # Create new thread with proper system message from agent
+        chat_history = ChatHistory(
+            messages=[],
+            system_message=agent.instructions
+        )
+        thread = ChatHistoryAgentThread(
+            chat_history=chat_history, 
+            thread_id=thread_key  # Use stable thread ID for persistence
+        )
+        user_threads[thread_key] = thread
+        logger.info(f"Created new persistent thread for {thread_key}")
+    
+    try:
+        yield agent, thread
+    finally:
+        # FastAPI will automatically handle cleanup here if needed
+        logger.debug(f"Request completed for thread {thread_key}")
 
 # Function invocation filter to log function calls and responses
 
@@ -118,32 +141,6 @@ async def ensure_mcp_connection(plugin: MCPStreamableHttpPlugin, user_id: str):
                 raise
             await asyncio.sleep(1)  # Brief delay before retry
     return False
-
-
-async def cleanup_old_threads():
-    """Background task to cleanup old unused threads"""
-    while True:
-        try:
-            await asyncio.sleep(THREAD_CLEANUP_INTERVAL)
-            current_time = datetime.utcnow()
-            
-            # Find threads older than MAX_AGE
-            threads_to_remove = [
-                thread_key for thread_key, timestamp in user_thread_timestamps.items()
-                if current_time - timestamp > timedelta(seconds=THREAD_MAX_AGE)
-            ]
-            
-            # Remove old threads
-            for thread_key in threads_to_remove:
-                if thread_key in user_threads:
-                    del user_threads[thread_key]
-                if thread_key in user_thread_timestamps:
-                    del user_thread_timestamps[thread_key]
-                logger.info(f"Cleaned up old thread: {thread_key}")
-                
-        except Exception as e:
-            logger.error(f"Error in cleanup task: {e}")
-            await asyncio.sleep(60)  # Wait before retrying
 
 
 async def init_chat(user_token: str, user_id: str) -> tuple[ChatCompletionAgent, MCPStreamableHttpPlugin]:
@@ -221,42 +218,13 @@ Use your Azure tools to investigate, analyze, and take action as appropriate.
 
 @app.post("/chat")
 async def chat(
-    user_input: str = Form(...), 
-    context_id: str = Form("default"),
-    x_ms_client_principal_id: str = Header(..., alias="x-ms-client-principal-id"),
-    x_ms_token_aad_access_token: str = Header(..., alias="x-ms-token-aad-access-token")
+    user_input: str = Form(...),
+    agent_thread: tuple[ChatCompletionAgent, ChatHistoryAgentThread] = Depends(get_agent_and_thread_dependency)
 ):
-    logger.info(
-        f"Received chat request: {user_input} with context ID: {context_id} for user: {x_ms_client_principal_id}")
+    agent, thread = agent_thread
+    logger.info(f"Received chat request: {user_input} for thread: {thread.thread_id}")
     
     try:
-        # Get or create agent for this user (singleton pattern using Azure user ID)
-        agent, azure_plugin = await init_chat(x_ms_token_aad_access_token, x_ms_client_principal_id)
-        
-        # Ensure MCP connection is active with retry logic
-        await ensure_mcp_connection(azure_plugin, x_ms_client_principal_id)
-        
-        # Create a unique thread key combining user and context
-        thread_key = f"{x_ms_client_principal_id}:{context_id}"
-        
-        # Get or create persistent thread for this user/context combination
-        thread = user_threads.get(thread_key)
-        if thread is None:
-            # Create new thread with proper system message from agent
-            chat_history = ChatHistory(
-                messages=[],
-                system_message=agent.instructions
-            )
-            thread = ChatHistoryAgentThread(
-                chat_history=chat_history, 
-                thread_id=thread_key  # Use stable thread ID for persistence
-            )
-            user_threads[thread_key] = thread
-            logger.info(f"Created new persistent thread for {thread_key}")
-        
-        # Update thread timestamp for cleanup tracking
-        user_thread_timestamps[thread_key] = datetime.utcnow()
-        
         # Get response from the agent - this automatically manages chat history
         response = await agent.get_response(message=user_input, thread=thread)
         
