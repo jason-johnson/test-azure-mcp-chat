@@ -24,6 +24,15 @@ from datetime import datetime
 # Load environment variables
 load_dotenv()
 
+# Print immediate startup info to stdout (will appear in logs immediately)
+print("=== STARTING APPLICATION ===")
+print(f"Python version: {os.sys.version}")
+print(f"Current working directory: {os.getcwd()}")
+print(f"Environment variables loaded: {len(os.environ)}")
+print(f"MCP_URL: {os.getenv('MCP_URL', 'NOT_SET')}")
+print(f"AZURE_OPENAI_ENDPOINT: {os.getenv('AZURE_OPENAI_ENDPOINT', 'NOT_SET')[:50]}...")
+print("=== CONFIGURING LOGGING ===")
+
 # Configure logging to provide maximum visibility for debugging
 logging.basicConfig(
     level=logging.DEBUG,  # Changed to DEBUG for maximum visibility
@@ -63,28 +72,51 @@ user_plugins: dict[str, MCPStreamableHttpPlugin] = {}
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
+    print("=== LIFESPAN STARTUP BEGIN ===")
     global azure_creds
     logger.info("=== APPLICATION STARTUP BEGINNING ===")
     try:
+        print("About to create Azure credentials...")
         logger.debug("Initializing Azure credentials...")
         azure_creds = DefaultAzureCredential()
+        print("Azure credentials created!")
         logger.info("Azure credentials created successfully")
         
         # Note: init_chat will be called lazily per user on first request
         logger.info("=== APPLICATION STARTUP COMPLETED ===")
+        print("=== LIFESPAN STARTUP COMPLETE ===")
 
     except Exception as e:
+        print(f"ERROR in lifespan startup: {e}")
         logger.error(f"Failed to initialize Azure credentials: {e}", exc_info=True)
         raise
 
+    print("=== LIFESPAN YIELDING ===")
     yield
     
     # Shutdown
+    print("=== LIFESPAN SHUTDOWN BEGIN ===")
     logger.info("=== APPLICATION SHUTDOWN BEGINNING ===")
     logger.info("=== APPLICATION SHUTDOWN COMPLETED ===")
+    print("=== LIFESPAN SHUTDOWN COMPLETE ===")
 
 
+print("=== CREATING FASTAPI APP ===")
 app = FastAPI(lifespan=lifespan)
+print("=== FASTAPI APP CREATED ===")
+
+# Add immediate simple endpoints that don't require any dependencies
+@app.get("/ping")
+async def ping():
+    """Simplest possible endpoint to test if the app is responding"""
+    return {"status": "pong", "timestamp": datetime.utcnow().isoformat()}
+
+@app.get("/alive")
+def alive():
+    """Synchronous endpoint to test basic functionality"""
+    return {"status": "alive", "pid": os.getpid()}
+
+print("=== SIMPLE ENDPOINTS ADDED ===")
 
 # Maintain persistent agent threads per context
 user_threads: dict[str, ChatHistoryAgentThread] = {}
@@ -365,4 +397,5 @@ async def index(request: Request):
 
 if __name__ == '__main__':
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+    print("=== STARTING UVICORN DIRECTLY ===")
+    uvicorn.run(app, host="0.0.0.0", port=8080, log_level="debug")
