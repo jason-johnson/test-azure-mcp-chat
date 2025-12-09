@@ -48,7 +48,6 @@ logging.getLogger("urllib3").setLevel(logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Global variables for Azure resources
-azure_creds = None
 azure_mcp = None
 agent = None
 azure_plugin = None
@@ -61,20 +60,9 @@ user_plugins: dict[str, MCPStreamableHttpPlugin] = {}
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    global azure_creds
     logger.info("=== APPLICATION STARTUP BEGINNING ===")
-    try:
-        logger.debug("Initializing Azure credentials...")
-        azure_creds = DefaultAzureCredential()
-        logger.info("Azure credentials created successfully")
-        
-        # Note: init_chat will be called lazily per user on first request
-        logger.info("=== APPLICATION STARTUP COMPLETED ===")
-
-    except Exception as e:
-        logger.error(f"Failed to initialize Azure credentials: {e}", exc_info=True)
-        raise
-
+    logger.info("Azure credentials will be initialized on first user request")
+    logger.info("=== APPLICATION STARTUP COMPLETED ===")
     logger.info("FastAPI app is now ready to serve requests")
     yield
     
@@ -214,7 +202,7 @@ async def ensure_mcp_connection(plugin: MCPStreamableHttpPlugin, user_id: str):
 
 
 async def init_chat(user_token: str, user_id: str) -> tuple[ChatCompletionAgent, MCPStreamableHttpPlugin]:
-    global azure_creds, user_agents, user_plugins
+    global user_agents, user_plugins
     
     # Use Azure-provided user ID as the cache key (stable across token renewals)
     user_key = user_id
@@ -229,6 +217,10 @@ async def init_chat(user_token: str, user_id: str) -> tuple[ChatCompletionAgent,
     logger.info(f"Creating new agent for user {user_key}")
     
     try:
+        # Create fresh Azure credentials for this user
+        logger.debug(f"Creating fresh Azure credentials for user {user_key}")
+        azure_creds = DefaultAzureCredential()
+        logger.debug(f"Azure credentials created successfully for user {user_key}")
         logger.debug(f"Creating MCP plugin for user {user_key}")
         # Create MCP plugin with user token for OBO authentication
         headers = {"Authorization": f"Bearer {user_token}"}
@@ -337,7 +329,7 @@ async def health_check():
         return {
             "status": "healthy",
             "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
-            "azure_creds": "initialized" if azure_creds else "not_initialized",
+            "azure_creds": "created_per_request",
             "user_agents_count": len(user_agents),
             "user_threads_count": len(user_threads),
             "mcp_url": os.getenv('MCP_URL', 'not_set'),
