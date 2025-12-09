@@ -44,7 +44,7 @@ resource "azurerm_linux_web_app" "python_app" {
   app_settings = merge({
     "AZURE_OPENAI_ENDPOINT"                    = azurerm_cognitive_account.openai.endpoint
     "AZURE_OPENAI_DEPLOYMENT_NAME"             = azurerm_cognitive_deployment.model.name
-    "MCP_URL"                                  = "http://${azurerm_linux_web_app.mcp_app.default_hostname}"
+    "MCP_URL"                                  = "https://${azurerm_linux_web_app.mcp_app.default_hostname}"
     "SCM_DO_BUILD_DURING_DEPLOYMENT"           = "true"
     "WEBSITES_PORT"                            = "8080"
     "WEBSITE_AUTH_AAD_ALLOWED_TENANTS"         = data.azuread_client_config.current.tenant_id
