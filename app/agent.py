@@ -23,19 +23,24 @@ import asyncio
 # Load environment variables
 load_dotenv()
 
-# Configure logging to reduce Azure telemetry noise
+# Configure logging to provide maximum visibility for debugging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.DEBUG,  # Changed to DEBUG for maximum visibility
+    format='%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s'
 )
 
-# Suppress verbose Azure telemetry logs
+# Suppress verbose Azure telemetry logs but keep them at INFO level for important errors
 logging.getLogger("azure.monitor.opentelemetry.exporter").setLevel(logging.WARNING)
 logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.WARNING)
-#logging.getLogger("azure.identity").setLevel(logging.WARNING)
-#logging.getLogger("azure.core").setLevel(logging.WARNING)
 
-# Keep our application logger at INFO level
+# Enable more detailed logging for key components to help debug hangs
+logging.getLogger("azure.identity").setLevel(logging.INFO)  # Keep auth info visible
+logging.getLogger("azure.core").setLevel(logging.INFO)  # Keep core Azure operations visible
+logging.getLogger("semantic_kernel").setLevel(logging.DEBUG)  # Enable SK debug logs
+logging.getLogger("fastapi").setLevel(logging.DEBUG)  # Enable FastAPI debug logs
+logging.getLogger("uvicorn").setLevel(logging.DEBUG)  # Enable uvicorn debug logs
+
+# Keep our application logger at DEBUG level
 logger = logging.getLogger(__name__)
 
 # Global variables for Azure resources
@@ -53,20 +58,24 @@ user_plugins: dict[str, MCPStreamableHttpPlugin] = {}
 async def lifespan(app: FastAPI):
     # Startup
     global azure_creds
-    logger.info("Initializing Azure credentials and client...")
+    logger.info("=== APPLICATION STARTUP BEGINNING ===")
     try:
-        logger.info("Creating Azure credentials...")
+        logger.debug("Initializing Azure credentials...")
         azure_creds = DefaultAzureCredential()
+        logger.info("Azure credentials created successfully")
         
         # Note: init_chat will be called lazily per user on first request
+        logger.info("=== APPLICATION STARTUP COMPLETED ===")
 
     except Exception as e:
-        logger.error(f"Failed to initialize Azure credentials: {e}")
+        logger.error(f"Failed to initialize Azure credentials: {e}", exc_info=True)
+        raise
 
     yield
     
     # Shutdown
-    logger.info("Shutting down...")
+    logger.info("=== APPLICATION SHUTDOWN BEGINNING ===")
+    logger.info("=== APPLICATION SHUTDOWN COMPLETED ===")
 
 
 app = FastAPI(lifespan=lifespan)
@@ -82,35 +91,50 @@ async def get_agent_and_thread_dependency(
 ) -> AsyncGenerator[tuple[ChatCompletionAgent, ChatHistoryAgentThread], None]:
     """FastAPI dependency to get or create agent and thread with automatic cleanup"""
     
-    # Get or create agent for this user
-    agent, azure_plugin = await init_chat(x_ms_token_aad_access_token, x_ms_client_principal_id)
-    
-    # Ensure MCP connection is active with retry logic
-    await ensure_mcp_connection(azure_plugin, x_ms_client_principal_id)
-    
-    # Create a unique thread key combining user and context
-    thread_key = f"{x_ms_client_principal_id}:{context_id}"
-    
-    # Get or create persistent thread for this user/context combination
-    thread = user_threads.get(thread_key)
-    if thread is None:
-        # Create new thread with proper system message from agent
-        chat_history = ChatHistory(
-            messages=[],
-            system_message=agent.instructions
-        )
-        thread = ChatHistoryAgentThread(
-            chat_history=chat_history, 
-            thread_id=thread_key  # Use stable thread ID for persistence
-        )
-        user_threads[thread_key] = thread
-        logger.info(f"Created new persistent thread for {thread_key}")
+    logger.debug(f"Dependency called for user {x_ms_client_principal_id}, context {context_id}")
     
     try:
+        logger.debug(f"Getting agent for user {x_ms_client_principal_id}")
+        # Get or create agent for this user
+        agent, azure_plugin = await init_chat(x_ms_token_aad_access_token, x_ms_client_principal_id)
+        logger.debug(f"Agent retrieved successfully for user {x_ms_client_principal_id}")
+        
+        logger.debug(f"Ensuring MCP connection for user {x_ms_client_principal_id}")
+        # Ensure MCP connection is active with retry logic
+        await ensure_mcp_connection(azure_plugin, x_ms_client_principal_id)
+        logger.debug(f"MCP connection established for user {x_ms_client_principal_id}")
+        
+        # Create a unique thread key combining user and context
+        thread_key = f"{x_ms_client_principal_id}:{context_id}"
+        logger.debug(f"Thread key: {thread_key}")
+        
+        # Get or create persistent thread for this user/context combination
+        thread = user_threads.get(thread_key)
+        if thread is None:
+            logger.debug(f"Creating new thread for {thread_key}")
+            # Create new thread with proper system message from agent
+            chat_history = ChatHistory(
+                messages=[],
+                system_message=agent.instructions
+            )
+            thread = ChatHistoryAgentThread(
+                chat_history=chat_history, 
+                thread_id=thread_key  # Use stable thread ID for persistence
+            )
+            user_threads[thread_key] = thread
+            logger.info(f"Created new persistent thread for {thread_key}")
+        else:
+            logger.debug(f"Using existing thread for {thread_key}")
+        
+        logger.debug(f"Yielding agent and thread for {thread_key}")
         yield agent, thread
+        
+    except Exception as e:
+        logger.error(f"Error in dependency for user {x_ms_client_principal_id}: {str(e)}", exc_info=True)
+        raise
     finally:
         # FastAPI will automatically handle cleanup here if needed
-        logger.debug(f"Request completed for thread {thread_key}")
+        logger.debug(f"Dependency cleanup completed for thread {thread_key}")
 
 # Function invocation filter to log function calls and responses
 
@@ -129,16 +153,20 @@ async def function_invocation_filter(context: FunctionInvocationContext, next):
 
 async def ensure_mcp_connection(plugin: MCPStreamableHttpPlugin, user_id: str):
     """Ensure MCP connection is active with retry logic"""
+    logger.debug(f"Ensuring MCP connection for user {user_id}")
     max_retries = 3
     for attempt in range(max_retries):
         try:
+            logger.debug(f"MCP connection attempt {attempt + 1} for user {user_id}")
             await plugin.connect()
+            logger.debug(f"MCP connection successful for user {user_id}")
             return True
         except Exception as e:
             logger.warning(f"MCP connection attempt {attempt + 1} failed for user {user_id}: {e}")
             if attempt == max_retries - 1:
                 logger.error(f"Failed to establish MCP connection for user {user_id} after {max_retries} attempts")
                 raise
+            logger.debug(f"Waiting before retry for user {user_id}")
             await asyncio.sleep(1)  # Brief delay before retry
     return False
 
@@ -149,40 +177,49 @@ async def init_chat(user_token: str, user_id: str) -> tuple[ChatCompletionAgent,
     # Use Azure-provided user ID as the cache key (stable across token renewals)
     user_key = user_id
     
+    logger.debug(f"init_chat called for user: {user_key}")
+    
     # Return cached instances if they exist
     if user_key in user_agents and user_key in user_plugins:
-        logger.info(f"Returning cached agent for user {user_key}")
+        logger.debug(f"Returning cached agent for user {user_key}")
         return user_agents[user_key], user_plugins[user_key]
     
     logger.info(f"Creating new agent for user {user_key}")
     
-    # Create MCP plugin with user token for OBO authentication
-    headers = {"Authorization": f"Bearer {user_token}"}
-    azure_plugin = MCPStreamableHttpPlugin(
-        name="AzurePlugin",
-        description="Azure Resources Plugin",
-        load_prompts=False,
-        url=os.getenv('MCP_URL', 'http://localhost:5008'),
-        headers=headers
-    )
+    try:
+        logger.debug(f"Creating MCP plugin for user {user_key}")
+        # Create MCP plugin with user token for OBO authentication
+        headers = {"Authorization": f"Bearer {user_token}"}
+        azure_plugin = MCPStreamableHttpPlugin(
+            name="AzurePlugin",
+            description="Azure Resources Plugin",
+            load_prompts=False,
+            url=os.getenv('MCP_URL', 'http://localhost:5008'),
+            headers=headers
+        )
+        logger.debug(f"MCP plugin created successfully for user {user_key}")
 
-    kernel = Kernel()
-    kernel.add_filter("function_invocation", function_invocation_filter)
-    
-    # Add the Azure MCP plugin to the kernel so the agent can access its functions
-    kernel.add_plugin(azure_plugin)
+        logger.debug(f"Creating kernel for user {user_key}")
+        kernel = Kernel()
+        kernel.add_filter("function_invocation", function_invocation_filter)
+        
+        # Add the Azure MCP plugin to the kernel so the agent can access its functions
+        kernel.add_plugin(azure_plugin)
+        logger.debug(f"Kernel and plugins configured for user {user_key}")
 
-    # Add Azure OpenAI chat completion with better error handling
-    chat_completion = AzureChatCompletion(
-        api_key=os.getenv('AZURE_OPENAI_API_KEY'),
-        endpoint=os.getenv('AZURE_OPENAI_ENDPOINT'),
-        deployment_name=os.getenv('AZURE_OPENAI_DEPLOYMENT_NAME'),
-        api_version="2024-12-01-preview",
-        azure_credential=azure_creds
-    )
-    
-    # Define comprehensive SRE instructions
-    sre_instructions = """
+        logger.debug(f"Creating Azure OpenAI chat completion service for user {user_key}")
+        # Add Azure OpenAI chat completion with better error handling
+        chat_completion = AzureChatCompletion(
+            api_key=os.getenv('AZURE_OPENAI_API_KEY'),
+            endpoint=os.getenv('AZURE_OPENAI_ENDPOINT'),
+            deployment_name=os.getenv('AZURE_OPENAI_DEPLOYMENT_NAME'),
+            api_version="2024-12-01-preview",
+            azure_credential=azure_creds
+        )
+        logger.debug(f"Azure OpenAI service created for user {user_key}")
+        
+        # Define comprehensive SRE instructions
+        sre_instructions = """
 Role: Azure Service Reliability Engineer (SRE)
 
 You are an expert Azure SRE responsible for:
@@ -202,18 +239,25 @@ Behavior Guidelines:
 Use your Azure tools to investigate, analyze, and take action as appropriate.
 """
 
-    agent = ChatCompletionAgent(
-        kernel=kernel,
-        service=chat_completion,
-        name="SREAgent",
-        instructions=sre_instructions
-    )
-    
-    # Cache the agent and plugin for this user
-    user_agents[user_key] = agent
-    user_plugins[user_key] = azure_plugin
-    
-    return agent, azure_plugin
+        logger.debug(f"Creating ChatCompletionAgent for user {user_key}")
+        agent = ChatCompletionAgent(
+            kernel=kernel,
+            service=chat_completion,
+            name="SREAgent",
+            instructions=sre_instructions
+        )
+        logger.debug(f"ChatCompletionAgent created successfully for user {user_key}")
+        
+        # Cache the agent and plugin for this user
+        user_agents[user_key] = agent
+        user_plugins[user_key] = azure_plugin
+        logger.info(f"Agent and plugin cached successfully for user {user_key}")
+        
+        return agent, azure_plugin
+        
+    except Exception as e:
+        logger.error(f"Error creating agent for user {user_key}: {str(e)}", exc_info=True)
+        raise
 
 
 @app.post("/chat")
@@ -222,20 +266,24 @@ async def chat(
     agent_thread: tuple[ChatCompletionAgent, ChatHistoryAgentThread] = Depends(get_agent_and_thread_dependency)
 ):
     agent, thread = agent_thread
-    logger.info(f"Received chat request: {user_input} for thread: {thread.thread_id}")
+    logger.info(f"=== CHAT REQUEST START === Input: '{user_input}' for thread: {thread.thread_id}")
     
     try:
+        logger.debug(f"Calling agent.get_response for thread {thread.thread_id}")
         # Get response from the agent - this automatically manages chat history
         response = await agent.get_response(message=user_input, thread=thread)
+        logger.debug(f"Agent response received for thread {thread.thread_id}")
         
         # Log the response content
         response_content = response.content if hasattr(response, 'content') else str(response)
-        logger.info(f"SRE Agent response: {response_content[:100]}...")  # Truncate long responses in logs
+        logger.info(f"SRE Agent response length: {len(response_content)} chars for thread {thread.thread_id}")
+        logger.debug(f"SRE Agent full response: {response_content}")
         
+        logger.info(f"=== CHAT REQUEST SUCCESS === for thread: {thread.thread_id}")
         return {"response": response_content}
         
     except Exception as e:
-        logger.error(f"Error in chat endpoint: {str(e)}", exc_info=True)
+        logger.error(f"=== CHAT REQUEST ERROR === for thread {thread.thread_id}: {str(e)}", exc_info=True)
         return {"response": f"I encountered an error while processing your request. Please try again. Error: {str(e)}", "error": True}
 
 
