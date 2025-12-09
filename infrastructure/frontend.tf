@@ -25,12 +25,30 @@ resource "azurerm_linux_web_app" "python_app" {
     app_command_line = "gunicorn -w 2 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8080 agent:app"
   }
 
+  auth_settings_v2 {
+    auth_enabled           = true
+    default_provider       = "azureactivedirectory"
+    require_authentication = true
+
+    active_directory_v2 {
+      client_id                  = azuread_application.fe.client_id
+      client_secret_setting_name = "MICROSOFT_PROVIDER_AUTHENTICATION_SECRET"
+      tenant_auth_endpoint       = "https://sts.windows.net/${data.azuread_client_config.current.tenant_id}/v2.0"
+    }
+
+    login {
+      token_store_enabled = true
+    }
+  }
+
   app_settings = merge({
-    "AZURE_OPENAI_ENDPOINT"          = azurerm_cognitive_account.openai.endpoint
-    "AZURE_OPENAI_DEPLOYMENT_NAME"   = azurerm_cognitive_deployment.model.name
-    "MCP_URL"                        = "http://${azurerm_linux_web_app.mcp_app.default_hostname}"
-    "SCM_DO_BUILD_DURING_DEPLOYMENT" = "true"
-    "WEBSITES_PORT"                  = "8080"
+    "AZURE_OPENAI_ENDPOINT"                    = azurerm_cognitive_account.openai.endpoint
+    "AZURE_OPENAI_DEPLOYMENT_NAME"             = azurerm_cognitive_deployment.model.name
+    "MCP_URL"                                  = "http://${azurerm_linux_web_app.mcp_app.default_hostname}"
+    "SCM_DO_BUILD_DURING_DEPLOYMENT"           = "true"
+    "WEBSITES_PORT"                            = "8080"
+    "WEBSITE_AUTH_AAD_ALLOWED_TENANTS"         = data.azuread_client_config.current.tenant_id
+    "MICROSOFT_PROVIDER_AUTHENTICATION_SECRET" = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.fe_secret.id})"
   }, local.app_insights_app_settings)
 
   logs {
