@@ -70,7 +70,7 @@ resource "azuread_application" "fe" {
   }
 
   required_resource_access {
-    resource_app_id = azuread_application.backend.client_id
+    resource_app_id = azuread_application.mcp.client_id
     resource_access {
       id   = random_uuid.fe_user_impersonation_id.result
       type = "Scope"
