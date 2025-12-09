@@ -19,6 +19,7 @@ from semantic_kernel.filters import FunctionInvocationContext
 from fastapi import Depends
 from typing import AsyncGenerator
 import asyncio
+from datetime import datetime
 
 # Load environment variables
 load_dotenv()
@@ -26,7 +27,8 @@ load_dotenv()
 # Configure logging to provide maximum visibility for debugging
 logging.basicConfig(
     level=logging.DEBUG,  # Changed to DEBUG for maximum visibility
-    format='%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s',
+    force=True  # Force reconfiguration even if logging was already configured
 )
 
 # Suppress verbose Azure telemetry logs but keep them at INFO level for important errors
@@ -39,6 +41,10 @@ logging.getLogger("azure.core").setLevel(logging.INFO)  # Keep core Azure operat
 logging.getLogger("semantic_kernel").setLevel(logging.DEBUG)  # Enable SK debug logs
 logging.getLogger("fastapi").setLevel(logging.DEBUG)  # Enable FastAPI debug logs
 logging.getLogger("uvicorn").setLevel(logging.DEBUG)  # Enable uvicorn debug logs
+logging.getLogger("gunicorn").setLevel(logging.DEBUG)  # Enable gunicorn debug logs
+
+# Disable urllib3 debug logs as they're too noisy
+logging.getLogger("urllib3").setLevel(logging.INFO)
 
 # Keep our application logger at DEBUG level
 logger = logging.getLogger(__name__)
@@ -285,6 +291,65 @@ async def chat(
     except Exception as e:
         logger.error(f"=== CHAT REQUEST ERROR === for thread {thread.thread_id}: {str(e)}", exc_info=True)
         return {"response": f"I encountered an error while processing your request. Please try again. Error: {str(e)}", "error": True}
+
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for debugging"""
+    logger.info("=== HEALTH CHECK REQUEST ===")
+    return {
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "azure_creds": "initialized" if azure_creds else "not_initialized",
+        "user_agents_count": len(user_agents),
+        "user_threads_count": len(user_threads),
+        "mcp_url": os.getenv('MCP_URL', 'not_set'),
+        "openai_endpoint": os.getenv('AZURE_OPENAI_ENDPOINT', 'not_set')[:50] + "..." if os.getenv('AZURE_OPENAI_ENDPOINT') else 'not_set'
+    }
+
+
+@app.get("/debug/test-auth")
+async def test_auth_headers(
+    x_ms_client_principal_id: str = Header(None, alias="x-ms-client-principal-id"),
+    x_ms_token_aad_access_token: str = Header(None, alias="x-ms-token-aad-access-token")
+):
+    """Test endpoint to check Azure App Service authentication headers"""
+    logger.info(f"=== AUTH TEST REQUEST === User ID: {x_ms_client_principal_id}")
+    
+    return {
+        "user_id": x_ms_client_principal_id,
+        "has_token": bool(x_ms_token_aad_access_token),
+        "token_length": len(x_ms_token_aad_access_token) if x_ms_token_aad_access_token else 0
+    }
+
+
+@app.get("/debug/test-agent")
+async def test_agent_creation():
+    """Test endpoint to check if agent can be created without auth"""
+    logger.info("=== AGENT TEST REQUEST ===")
+    
+    # Use dummy values for testing
+    dummy_token = "dummy_token"
+    dummy_user_id = "test_user"
+    
+    try:
+        logger.info("Testing agent creation with dummy values...")
+        agent, plugin = await init_chat(dummy_token, dummy_user_id)
+        logger.info("Agent created successfully!")
+        
+        return {
+            "status": "success",
+            "agent_name": agent.name,
+            "plugin_name": plugin.name,
+            "cached_agents": len(user_agents)
+        }
+    except Exception as e:
+        logger.error(f"Agent creation failed: {str(e)}", exc_info=True)
+        return {
+            "status": "error", 
+            "error": str(e),
+            "error_type": type(e).__name__
+        }
 
 
 @app.get("/", response_class=HTMLResponse)
