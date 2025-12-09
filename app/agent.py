@@ -17,7 +17,7 @@ from semantic_kernel.filters import FunctionInvocationContext
 from fastapi import Depends
 from typing import AsyncGenerator
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Load environment variables
 load_dotenv()
@@ -112,7 +112,7 @@ def simple():
 async def ping():
     """Simplest possible endpoint to test if the app is responding"""
     logger.info("Ping endpoint accessed")
-    return {"status": "pong", "timestamp": datetime.utcnow().isoformat()}
+    return {"status": "pong", "timestamp": datetime.now(timezone.utc).isoformat()}
 
 @app.get("/alive")
 def alive():
@@ -336,7 +336,7 @@ async def health_check():
     try:
         return {
             "status": "healthy",
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
             "azure_creds": "initialized" if azure_creds else "not_initialized",
             "user_agents_count": len(user_agents),
             "user_threads_count": len(user_threads),
