@@ -65,26 +65,18 @@ jobs:
             pip install -r requirements.txt
           workingDirectory: '$(Build.SourcesDirectory)'
       
-      # Package Python application with dependencies
       - task: ArchiveFiles@2
-        displayName: "Archive Python Application"
+        displayName: 'Archive Python Application'
         inputs:
-          rootFolderOrFile: "$(Build.SourcesDirectory)/app"
+          rootFolderOrFile: '$(Build.SourcesDirectory)/app'
           includeRootFolder: false
-          archiveType: "zip"
-          archiveFile: "$(Build.ArtifactStagingDirectory)/app.zip"
+          archiveType: zip
+          archiveFile: $(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip
           replaceExistingArchive: true
-          excludePaths: |
-            uv.lock
-            pyproject.toml
-            .git/**
 
       - task: AzureWebApp@1
-        displayName: "Deploy Python Application"
+        displayName: 'Deploy Azure Web App : $(python_web_app_name)'
         inputs:
           azureSubscription: $(servicePrinciple)
-          appType: "webAppLinux"
           appName: $(python_web_app_name)
-          resourceGroupName: $(resource_group_name)
-          package: "$(Build.ArtifactStagingDirectory)/app.zip"
-          deploymentMethod: "zipDeploy" 
+          package: $(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip
