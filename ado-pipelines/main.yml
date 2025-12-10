@@ -61,7 +61,10 @@ jobs:
           targetType: 'inline'
           script: |
             cd $(Build.SourcesDirectory)/app
+            python -m venv antenv
+            source antenv/bin/activate
             python -m pip install --upgrade pip
+            pip install setuptools  
             pip install -r requirements.txt
           workingDirectory: '$(Build.SourcesDirectory)'
       
