@@ -77,11 +77,6 @@ jobs:
           excludePaths: |
             uv.lock
             pyproject.toml
-            .venv/**
-            devops_agent.egg-info/**
-            dist/**
-            **/__pycache__/**
-            **/*.pyc
             .git/**
 
       - task: AzureWebApp@1
