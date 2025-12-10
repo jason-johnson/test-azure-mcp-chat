@@ -450,12 +450,14 @@ async def test_mcp_connection(
             kernel = agent._kernel if hasattr(agent, '_kernel') else None
             if kernel:
                 plugins = kernel.plugins
+                logger.info(f"Available plugins: {list(plugins.keys())}")
                 mcp_functions = []
                 for plugin_name, plugin_obj in plugins.items():
+                    logger.info(f"Checking plugin: {plugin_name}")
                     if plugin_name.lower() == "azureplugin":
                         functions = list(plugin_obj.functions.keys()) if hasattr(plugin_obj, 'functions') else []
                         mcp_functions.extend(functions)
-                        logger.info(f"Found {len(functions)} functions in MCP plugin")
+                        logger.info(f"Found {len(functions)} functions in MCP plugin: {functions}")
                 
                 return {
                     "status": "success",
