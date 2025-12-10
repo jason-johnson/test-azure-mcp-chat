@@ -47,7 +47,25 @@ jobs:
       python_web_app_name: $[ dependencies.Terraform.outputs['Terraform.python_web_app_name'] ]
       resource_group_name: $[ dependencies.Terraform.outputs['Terraform.resource_group_name'] ]
     steps:
-      # Package Python application
+      # Setup Python environment
+      - task: UsePythonVersion@0
+        displayName: "Set Python Version"
+        inputs:
+          versionSpec: '3.13'
+          addToPath: true
+      
+      # Install Python dependencies
+      - task: Bash@3
+        displayName: "Install Python Dependencies"
+        inputs:
+          targetType: 'inline'
+          script: |
+            cd $(Build.SourcesDirectory)/app
+            python -m pip install --upgrade pip
+            pip install -r requirements.txt
+          workingDirectory: '$(Build.SourcesDirectory)'
+      
+      # Package Python application with dependencies
       - task: ArchiveFiles@2
         displayName: "Archive Python Application"
         inputs:
