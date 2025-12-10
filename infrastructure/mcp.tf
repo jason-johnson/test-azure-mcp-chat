@@ -61,7 +61,7 @@ resource "azurerm_linux_web_app" "mcp_app" {
     "AZURE_MCP_COLLECT_TELEMETRY"                     = "true"
     "AzureAd__Instance"                               = "https://login.microsoftonline.com/"
     "AzureAd__TenantId"                               = data.azuread_client_config.current.tenant_id
-    "AzureAd__ClientId"                               = azurerm_user_assigned_identity.mcp_app.client_id
+    "AzureAd__ClientId"                               = azuread_application.mcp.client_id
     "AZURE_LOG_LEVEL"                                 = "Verbose"
     "AZURE_MCP_DANGEROUSLY_DISABLE_HTTPS_REDIRECTION" = "true"
     "WEBSITES_PORT"                                   = "8080"
