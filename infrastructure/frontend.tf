@@ -23,12 +23,16 @@ resource "azurerm_linux_web_app" "python_app" {
     }
 
     app_command_line = "gunicorn -w 2 -k uvicorn.workers.UvicornWorker --timeout 600 -b 0.0.0.0:8000 agent:app"
+    
+    health_check_path                 = "/health"
+    health_check_eviction_time_in_min = 2
   }
 
   auth_settings_v2 {
     auth_enabled           = true
     default_provider       = "azureactivedirectory"
     require_authentication = true
+    excluded_paths         = ["/health", "/ping", "/alive"]
 
     active_directory_v2 {
       client_id                  = azuread_application.fe.client_id
