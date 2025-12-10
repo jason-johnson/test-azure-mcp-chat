@@ -322,9 +322,31 @@ async def chat(
 
 
 @app.get("/health")
-async def health_check():
+async def health_check(request: Request):
     """Health check endpoint for debugging"""
     logger.info("=== HEALTH CHECK REQUEST ===")
+    
+    # Optionally validate x-ms-auth-internal-token for security
+    internal_token = request.headers.get("x-ms-auth-internal-token")
+    if internal_token:
+        try:
+            import hashlib
+            import base64
+            env_key = os.getenv("WEBSITE_AUTH_ENCRYPTION_KEY")
+            if env_key:
+                expected_hash = base64.b64encode(
+                    hashlib.sha256(env_key.encode('utf-8')).digest()
+                ).decode('utf-8')
+                if expected_hash != internal_token:
+                    logger.warning("Health check request with invalid internal token")
+                    return {"status": "unauthorized"}, 401
+                else:
+                    logger.info("Health check request validated with internal token")
+            else:
+                logger.info("Health check request has internal token but no validation key available")
+        except Exception as e:
+            logger.warning(f"Error validating internal token: {e}")
+    
     try:
         return {
             "status": "healthy",
@@ -333,7 +355,8 @@ async def health_check():
             "user_agents_count": len(user_agents),
             "user_threads_count": len(user_threads),
             "mcp_url": os.getenv('MCP_URL', 'not_set'),
-            "openai_endpoint": os.getenv('AZURE_OPENAI_ENDPOINT', 'not_set')[:50] + "..." if os.getenv('AZURE_OPENAI_ENDPOINT') else 'not_set'
+            "openai_endpoint": os.getenv('AZURE_OPENAI_ENDPOINT', 'not_set')[:50] + "..." if os.getenv('AZURE_OPENAI_ENDPOINT') else 'not_set',
+            "authenticated_request": internal_token is not None
         }
     except Exception as e:
         logger.error(f"Health check failed: {e}")
