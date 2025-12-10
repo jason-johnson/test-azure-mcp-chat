@@ -84,18 +84,6 @@ async def log_requests(request: Request, call_next):
     logger.info(f"Response: {response.status_code}")
     return response
 
-@app.get("/")
-async def root():
-    """Root endpoint - simplest possible"""
-    logger.info("Root endpoint accessed")
-    return "Azure MCP Chat Agent is running!"
-
-@app.get("/simple")
-def simple():
-    """Simplest sync endpoint"""
-    logger.info("Simple endpoint accessed")
-    return "OK"
-
 @app.get("/ping")
 async def ping():
     """Simplest possible endpoint to test if the app is responding"""
@@ -407,7 +395,7 @@ async def test_agent_creation():
         }
 
 
-@app.get("/index", response_class=HTMLResponse)
+@app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     try:
         with open("index.html", "r", encoding="utf-8") as f:
