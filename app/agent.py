@@ -17,6 +17,7 @@ from semantic_kernel.filters import FunctionInvocationContext
 from fastapi import Depends
 from typing import AsyncGenerator
 import asyncio
+import hashlib
 from datetime import datetime, timezone
 
 # Load environment variables
@@ -192,10 +193,11 @@ async def ensure_mcp_connection(plugin: MCPStreamableHttpPlugin, user_id: str):
 async def init_chat(user_token: str, user_id: str) -> tuple[ChatCompletionAgent, MCPStreamableHttpPlugin]:
     global user_agents, user_plugins
     
-    # Use Azure-provided user ID as the cache key (stable across token renewals)
-    user_key = user_id
+    # Create cache key that includes token signature to handle token changes
+    token_hash = hashlib.md5(user_token.encode()).hexdigest()[:8]  # First 8 chars of MD5
+    user_key = f"{user_id}:{token_hash}"
     
-    logger.debug(f"init_chat called for user: {user_key}")
+    logger.debug(f"init_chat called for user: {user_id}, cache_key: {user_key}")
     
     # Return cached instances if they exist
     if user_key in user_agents and user_key in user_plugins:
@@ -269,7 +271,7 @@ Use your Azure tools to investigate, analyze, and take action as appropriate.
         )
         logger.debug(f"ChatCompletionAgent created successfully for user {user_key}")
         
-        # Cache the agent and plugin for this user
+        # Cache both agent and plugin for this user
         user_agents[user_key] = agent
         user_plugins[user_key] = azure_plugin
         logger.info(f"Agent and plugin cached successfully for user {user_key}")
