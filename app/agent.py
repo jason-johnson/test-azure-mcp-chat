@@ -366,23 +366,29 @@ async def test_auth_headers(
 
 
 @app.get("/debug/test-agent")
-async def test_agent_creation():
-    """Test endpoint to check if agent can be created without auth"""
+async def test_agent_creation(
+    x_ms_client_principal_id: str = Header(None, alias="x-ms-client-principal-id"),
+    x_ms_token_aad_access_token: str = Header(None, alias="x-ms-token-aad-access-token")
+):
+    """Test endpoint to check if agent can be created"""
     logger.info("=== AGENT TEST REQUEST ===")
     
-    # Use dummy values for testing
-    dummy_token = "dummy_token"
-    dummy_user_id = "test_user"
+    # Use real authentication if available, otherwise fallback to dummy values
+    user_token = x_ms_token_aad_access_token if x_ms_token_aad_access_token else "dummy_token"
+    user_id = x_ms_client_principal_id if x_ms_client_principal_id else "test_user"
+    
+    logger.info(f"Testing agent creation for user: {user_id} (real_auth: {bool(x_ms_client_principal_id)})")
     
     try:
-        logger.info("Testing agent creation with dummy values...")
-        agent, plugin = await init_chat(dummy_token, dummy_user_id)
+        agent, plugin = await init_chat(user_token, user_id)
         logger.info("Agent created successfully!")
         
         return {
             "status": "success",
             "agent_name": agent.name,
             "plugin_name": plugin.name,
+            "user_id": user_id,
+            "using_real_auth": bool(x_ms_client_principal_id),
             "cached_agents": len(user_agents)
         }
     except Exception as e:
@@ -390,7 +396,100 @@ async def test_agent_creation():
         return {
             "status": "error", 
             "error": str(e),
-            "error_type": type(e).__name__
+            "error_type": type(e).__name__,
+            "user_id": user_id,
+            "using_real_auth": bool(x_ms_client_principal_id)
+        }
+
+
+@app.get("/debug/test-mcp")
+async def test_mcp_connection(
+    x_ms_client_principal_id: str = Header(None, alias="x-ms-client-principal-id"),
+    x_ms_token_aad_access_token: str = Header(None, alias="x-ms-token-aad-access-token")
+):
+    """Test endpoint to check MCP server connection and functionality"""
+    logger.info("=== MCP TEST REQUEST ===")
+    
+    # Use real authentication if available, otherwise fallback to dummy values
+    user_token = x_ms_token_aad_access_token if x_ms_token_aad_access_token else "dummy_token"
+    user_id = x_ms_client_principal_id if x_ms_client_principal_id else "test_mcp_user"
+    
+    logger.info(f"Testing MCP connection for user: {user_id} (real_auth: {bool(x_ms_client_principal_id)})")
+    
+    try:
+        # Create agent and plugin
+        agent, plugin = await init_chat(user_token, user_id)
+        logger.info(f"Agent and plugin created: {agent.name}, {plugin.name}")
+        
+        # Test MCP connection
+        logger.info("Testing MCP connection...")
+        await ensure_mcp_connection(plugin, user_id)
+        logger.info("MCP connection established successfully")
+        
+        # Try to get available tools from MCP server
+        try:
+            logger.info("Fetching available MCP tools...")
+            # Get the kernel from the agent
+            kernel = agent._kernel if hasattr(agent, '_kernel') else None
+            if kernel:
+                plugins = kernel.plugins
+                mcp_functions = []
+                for plugin_name, plugin_obj in plugins.items():
+                    if plugin_name.lower() == "azureplugin":
+                        functions = list(plugin_obj.functions.keys()) if hasattr(plugin_obj, 'functions') else []
+                        mcp_functions.extend(functions)
+                        logger.info(f"Found {len(functions)} functions in MCP plugin")
+                
+                return {
+                    "status": "success",
+                    "agent_name": agent.name,
+                    "plugin_name": plugin.name,
+                    "user_id": user_id,
+                    "using_real_auth": bool(x_ms_client_principal_id),
+                    "mcp_url": os.getenv('MCP_URL', 'not_set'),
+                    "mcp_connected": True,
+                    "available_functions": mcp_functions[:10],  # Limit to first 10 for readability
+                    "total_function_count": len(mcp_functions),
+                    "cached_agents": len(user_agents)
+                }
+            else:
+                logger.warning("Could not access kernel from agent")
+                return {
+                    "status": "partial_success",
+                    "agent_name": agent.name,
+                    "plugin_name": plugin.name,
+                    "user_id": user_id,
+                    "using_real_auth": bool(x_ms_client_principal_id),
+                    "mcp_url": os.getenv('MCP_URL', 'not_set'),
+                    "mcp_connected": True,
+                    "warning": "Could not enumerate functions",
+                    "cached_agents": len(user_agents)
+                }
+                
+        except Exception as func_error:
+            logger.warning(f"Could not enumerate MCP functions: {func_error}")
+            return {
+                "status": "partial_success",
+                "agent_name": agent.name,
+                "plugin_name": plugin.name,
+                "user_id": user_id,
+                "using_real_auth": bool(x_ms_client_principal_id),
+                "mcp_url": os.getenv('MCP_URL', 'not_set'),
+                "mcp_connected": True,
+                "warning": f"Function enumeration failed: {str(func_error)}",
+                "cached_agents": len(user_agents)
+            }
+            
+    except Exception as e:
+        logger.error(f"MCP test failed: {str(e)}", exc_info=True)
+        return {
+            "status": "error", 
+            "error": str(e),
+            "error_type": type(e).__name__,
+            "user_id": user_id,
+            "using_real_auth": bool(x_ms_client_principal_id),
+            "mcp_url": os.getenv('MCP_URL', 'not_set'),
+            "mcp_connected": False
         }
 
 
