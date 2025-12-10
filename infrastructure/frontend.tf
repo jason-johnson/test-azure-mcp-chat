@@ -22,7 +22,7 @@ resource "azurerm_linux_web_app" "python_app" {
       python_version = "3.13"
     }
 
-    app_command_line = "gunicorn -w 2 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8080 agent:app"
+    app_command_line = "gunicorn -w 2 -k uvicorn.workers.UvicornWorker --timeout 600 -b 0.0.0.0:8000 agent:app"
   }
 
   auth_settings_v2 {
@@ -45,7 +45,6 @@ resource "azurerm_linux_web_app" "python_app" {
     "AZURE_OPENAI_ENDPOINT"                    = azurerm_cognitive_account.openai.endpoint
     "AZURE_OPENAI_DEPLOYMENT_NAME"             = azurerm_cognitive_deployment.model.name
     "MCP_URL"                                  = "https://${azurerm_linux_web_app.mcp_app.default_hostname}"
-    "WEBSITES_PORT"                            = "8080"
     "WEBSITE_AUTH_AAD_ALLOWED_TENANTS"         = data.azuread_client_config.current.tenant_id
     "MICROSOFT_PROVIDER_AUTHENTICATION_SECRET" = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.fe_secret.id})"
   }, local.app_insights_app_settings)
