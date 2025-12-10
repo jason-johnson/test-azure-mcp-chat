@@ -418,6 +418,21 @@ async def test_mcp_connection(
     
     logger.info(f"Testing MCP connection for user: {user_id} (real_auth: {bool(x_ms_client_principal_id)})")
     
+    # Debug: Let's decode the token to see what audience we're getting
+    if x_ms_token_aad_access_token:
+        import base64
+        import json
+        try:
+            # Decode JWT payload (middle part)
+            token_parts = user_token.split('.')
+            if len(token_parts) >= 2:
+                payload = base64.urlsafe_b64decode(token_parts[1] + '==')  # Add padding
+                token_data = json.loads(payload)
+                logger.info(f"Token audience: {token_data.get('aud', 'NOT_FOUND')}")
+                logger.info(f"Token scope: {token_data.get('scp', 'NOT_FOUND')}")
+        except Exception as e:
+            logger.warning(f"Could not decode token: {e}")
+    
     try:
         # Create agent and plugin
         agent, plugin = await init_chat(user_token, user_id)
