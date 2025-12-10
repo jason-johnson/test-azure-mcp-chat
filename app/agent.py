@@ -235,8 +235,7 @@ async def init_chat(user_token: str, user_id: str) -> tuple[ChatCompletionAgent,
             api_key=os.getenv('AZURE_OPENAI_API_KEY'),
             endpoint=os.getenv('AZURE_OPENAI_ENDPOINT'),
             deployment_name=os.getenv('AZURE_OPENAI_DEPLOYMENT_NAME'),
-            api_version="2024-12-01-preview",
-            azure_credential=azure_creds
+            api_version="2024-12-01-preview"
         )
         logger.debug(f"Azure OpenAI service created for user {user_key}")
         
