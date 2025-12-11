@@ -39,7 +39,7 @@ resource "azurerm_linux_web_app" "python_app" {
       client_secret_setting_name = "MICROSOFT_PROVIDER_AUTHENTICATION_SECRET"
       tenant_auth_endpoint       = "https://sts.windows.net/${data.azuread_client_config.current.tenant_id}/v2.0"
       login_parameters = {
-        "scope" = "openid profile offline_access api://${azuread_application.mcp.client_id}/Mcp.Tools.ReadWrite"
+        "scope" = "openid offline_access api://${azuread_application.mcp.client_id}/Mcp.Tools.ReadWrite"
       }
     }
 
