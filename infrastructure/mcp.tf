@@ -99,8 +99,7 @@ resource "azuread_application" "mcp" {
   owners       = [data.azuread_client_config.current.object_id]
 
   api {
-    mapped_claims_enabled          = true
-    requested_access_token_version = 2
+    mapped_claims_enabled = true
 
     oauth2_permission_scope {
       admin_consent_description  = "Allow the application to access Azure MCP tools on behalf of the signed-in user."
@@ -111,6 +110,12 @@ resource "azuread_application" "mcp" {
       user_consent_description   = "Allow the application to access Azure MCP tools on your behalf."
       user_consent_display_name  = "Access Azure MCP tools"
       value                      = "Mcp.Tools.ReadWrite"
+    }
+  }
+
+  optional_claims {
+    access_token {
+      name = "scp"
     }
   }
 
