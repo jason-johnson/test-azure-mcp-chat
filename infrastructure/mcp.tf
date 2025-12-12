@@ -43,7 +43,7 @@ resource "azurerm_linux_web_app" "mcp_app" {
     active_directory_v2 {
       client_id                  = azuread_application.mcp.client_id
       client_secret_setting_name = "MICROSOFT_PROVIDER_AUTHENTICATION_SECRET"
-      tenant_auth_endpoint       = "https://sts.windows.net/${data.azuread_client_config.current.tenant_id}/v2.0"
+      tenant_auth_endpoint       = "https://sts.windows.net/${data.azuread_client_config.current.tenant_id}"
       allowed_audiences          = ["api://${azuread_application.mcp.client_id}"]
       allowed_applications       = [azuread_application.fe.client_id]
     }
