@@ -428,8 +428,8 @@ async def test_mcp_connection(
             if len(token_parts) >= 2:
                 payload = base64.urlsafe_b64decode(token_parts[1] + '==')  # Add padding
                 token_data = json.loads(payload)
-                logger.info(f"Token audience: {token_data.get('aud', 'NOT_FOUND')}")
-                logger.info(f"Token scope: {token_data.get('scp', 'NOT_FOUND')}")
+                logger.info(f"Token audience: '{token_data.get('aud', 'NOT_FOUND')}'")
+                logger.info(f"Token scope: '{token_data.get('scp', 'NOT_FOUND')}'")
         except Exception as e:
             logger.warning(f"Could not decode token: {e}")
     
