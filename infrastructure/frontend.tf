@@ -98,11 +98,6 @@ resource "azuread_application" "fe" {
       id   = random_uuid.fe_user_impersonation_id.result
       type = "Scope"
     }
-
-    resource_access {
-      id   = local.mcp_role_id
-      type = "Role"
-    }
   }
 
   web {
