@@ -18,6 +18,7 @@ from fastapi import Depends
 from typing import AsyncGenerator
 import asyncio
 import hashlib
+import time
 from datetime import datetime, timezone
 
 # Load environment variables
@@ -56,6 +57,8 @@ azure_plugin = None
 # Cache agents per user to avoid recreating MCP connections
 user_agents: dict[str, ChatCompletionAgent] = {}
 user_plugins: dict[str, MCPStreamableHttpPlugin] = {}
+user_cache_timestamps: dict[str, float] = {}  # Track when each cache entry was created
+CACHE_TTL_MINUTES = 45  # Cache TTL in minutes (less than typical 60-min token lifetime)
 
 
 @asynccontextmanager
@@ -191,7 +194,7 @@ async def ensure_mcp_connection(plugin: MCPStreamableHttpPlugin, user_id: str):
 
 
 async def init_chat(user_token: str, user_id: str) -> tuple[ChatCompletionAgent, MCPStreamableHttpPlugin]:
-    global user_agents, user_plugins
+    global user_agents, user_plugins, user_cache_timestamps
     
     # Create cache key that includes token signature to handle token changes
     token_hash = hashlib.md5(user_token.encode()).hexdigest()[:8]  # First 8 chars of MD5
@@ -199,10 +202,23 @@ async def init_chat(user_token: str, user_id: str) -> tuple[ChatCompletionAgent,
     
     logger.debug(f"init_chat called for user: {user_id}, cache_key: {user_key}")
     
-    # Return cached instances if they exist
-    if user_key in user_agents and user_key in user_plugins:
+    # Check if cached instances exist and are not expired
+    current_time = time.time()
+    cache_valid = (user_key in user_agents and 
+                   user_key in user_plugins and 
+                   user_key in user_cache_timestamps and
+                   (current_time - user_cache_timestamps[user_key]) < (CACHE_TTL_MINUTES * 60))
+    
+    if cache_valid:
         logger.debug(f"Returning cached agent for user {user_key}")
         return user_agents[user_key], user_plugins[user_key]
+    
+    # Clear expired cache entries
+    if user_key in user_cache_timestamps:
+        logger.info(f"Cache expired for user {user_key}, recreating agent and plugin")
+        user_agents.pop(user_key, None)
+        user_plugins.pop(user_key, None)
+        user_cache_timestamps.pop(user_key, None)
     
     logger.info(f"Creating new agent for user {user_key}")
     
@@ -271,9 +287,10 @@ Use your Azure tools to investigate, analyze, and take action as appropriate.
         )
         logger.debug(f"ChatCompletionAgent created successfully for user {user_key}")
         
-        # Cache both agent and plugin for this user
+        # Cache both agent and plugin for this user with timestamp
         user_agents[user_key] = agent
         user_plugins[user_key] = azure_plugin
+        user_cache_timestamps[user_key] = time.time()
         logger.info(f"Agent and plugin cached successfully for user {user_key}")
         
         return agent, azure_plugin
