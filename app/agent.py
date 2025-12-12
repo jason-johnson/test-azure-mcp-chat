@@ -37,7 +37,7 @@ logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(l
 # Enable more detailed logging for key components to help debug hangs
 logging.getLogger("azure.identity").setLevel(logging.INFO)  # Keep auth info visible
 logging.getLogger("azure.core").setLevel(logging.INFO)  # Keep core Azure operations visible
-logging.getLogger("semantic_kernel").setLevel(logging.DEBUG)  # Enable SK debug logs
+logging.getLogger("semantic_kernel").setLevel(logging.INFO)  # Reduce SK verbosity - was DEBUG
 logging.getLogger("fastapi").setLevel(logging.DEBUG)  # Enable FastAPI debug logs
 logging.getLogger("uvicorn").setLevel(logging.DEBUG)  # Enable uvicorn debug logs
 logging.getLogger("gunicorn").setLevel(logging.DEBUG)  # Enable gunicorn debug logs
