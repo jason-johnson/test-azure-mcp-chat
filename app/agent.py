@@ -146,7 +146,7 @@ async def get_agent_and_thread_dependency(
             logger.debug(f"Using existing thread for {thread_key}")
         
         logger.debug(f"Yielding agent and thread for {thread_key}")
-        yield agent, thread
+        yield agent, thread, thread_key
         
     except Exception as e:
         logger.error(f"Error in dependency for user {x_ms_client_principal_id}: {str(e)}", exc_info=True)
@@ -286,27 +286,27 @@ Use your Azure tools to investigate, analyze, and take action as appropriate.
 @app.post("/chat")
 async def chat(
     user_input: str = Form(...),
-    agent_thread: tuple[ChatCompletionAgent, ChatHistoryAgentThread] = Depends(get_agent_and_thread_dependency)
+    agent_thread: tuple[ChatCompletionAgent, ChatHistoryAgentThread, str] = Depends(get_agent_and_thread_dependency)
 ):
-    agent, thread = agent_thread
-    logger.info(f"=== CHAT REQUEST START === Input: '{user_input}' for thread: {thread.thread_id}")
+    agent, thread, thread_key = agent_thread
+    logger.info(f"=== CHAT REQUEST START === Input: '{user_input}' for thread: {thread_key}")
     
     try:
-        logger.debug(f"Calling agent.get_response for thread {thread.thread_id}")
+        logger.debug(f"Calling agent.get_response for thread {thread_key}")
         # Get response from the agent - this automatically manages chat history
         response = await agent.get_response(message=user_input, thread=thread)
-        logger.debug(f"Agent response received for thread {thread.thread_id}")
+        logger.debug(f"Agent response received for thread {thread_key}")
         
         # Log the response content
         response_content = response.content if hasattr(response, 'content') else str(response)
-        logger.info(f"SRE Agent response length: {len(response_content)} chars for thread {thread.thread_id}")
+        logger.info(f"SRE Agent response length: {len(response_content)} chars for thread {thread_key}")
         logger.debug(f"SRE Agent full response: {response_content}")
         
-        logger.info(f"=== CHAT REQUEST SUCCESS === for thread: {thread.thread_id}")
+        logger.info(f"=== CHAT REQUEST SUCCESS === for thread: {thread_key}")
         return {"response": response_content}
         
     except Exception as e:
-        logger.error(f"=== CHAT REQUEST ERROR === for thread {thread.thread_id}: {str(e)}", exc_info=True)
+        logger.error(f"=== CHAT REQUEST ERROR === for thread {thread_key}: {str(e)}", exc_info=True)
         return {"response": f"I encountered an error while processing your request. Please try again. Error: {str(e)}", "error": True}
 
 
