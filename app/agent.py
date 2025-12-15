@@ -299,7 +299,7 @@ Use your Azure tools to investigate, analyze, and take action as appropriate.
         
         # Get execution settings from kernel and configure function calling
         settings = kernel.get_prompt_execution_settings_from_service_id(service_id=service_id)
-        settings.function_choice_behavior = FunctionChoiceBehavior.auto()
+        settings.function_choice_behavior = FunctionChoiceBehavior.Auto()
         
         agent = ChatCompletionAgent(
             kernel=kernel,
