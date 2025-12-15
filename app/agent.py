@@ -315,7 +315,17 @@ async def chat(
         logger.debug(f"Agent response received for thread {thread_key}")
         
         # Log the response content
-        response_content = response.content if hasattr(response, 'content') else str(response)
+        if hasattr(response, 'content'):
+            # Handle ChatMessageContent object
+            if hasattr(response.content, '__str__'):
+                response_content = str(response.content)
+            elif hasattr(response.content, 'value'):
+                response_content = response.content.value
+            else:
+                response_content = str(response.content)
+        else:
+            response_content = str(response)
+        
         logger.info(f"SRE Agent response length: {len(response_content)} chars for thread {thread_key}")
         logger.debug(f"SRE Agent full response: {response_content}")
         
