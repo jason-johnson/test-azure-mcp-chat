@@ -305,6 +305,7 @@ Use your Azure tools to investigate, analyze, and take action as appropriate.
             kernel=kernel,
             name="SREAgent",
             instructions=sre_instructions,
+            plugins=[azure_plugin],  # Pass the plugin directly to the agent
             arguments=KernelArguments(settings=settings)
         )
         logger.debug(f"ChatCompletionAgent created successfully for user {user_key}")
