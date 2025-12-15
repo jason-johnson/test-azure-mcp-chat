@@ -8,6 +8,7 @@ from fastapi.responses import HTMLResponse
 from semantic_kernel.agents.chat_completion.chat_completion_agent import ChatCompletionAgent, ChatHistoryAgentThread
 from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
 from semantic_kernel.connectors.ai.open_ai import OpenAIChatPromptExecutionSettings
+from semantic_kernel.connectors.ai import FunctionChoiceBehavior
 from semantic_kernel.contents.chat_history import ChatHistory
 
 from azure.identity.aio import DefaultAzureCredential
@@ -269,6 +270,8 @@ async def init_chat(user_token: str, user_id: str) -> tuple[ChatCompletionAgent,
         logger.debug(f"Azure OpenAI service created for user {user_key}")
         
         # Add the chat completion service to the kernel
+        service_id = "azure_oai"
+        chat_completion.service_id = service_id
         kernel.add_service(chat_completion)
         
         # Define comprehensive SRE instructions
@@ -294,18 +297,15 @@ Use your Azure tools to investigate, analyze, and take action as appropriate.
 
         logger.debug(f"Creating ChatCompletionAgent for user {user_key}")
         
-        # Configure execution settings to enable tool calling
-        execution_settings = OpenAIChatPromptExecutionSettings(
-            tool_choice="auto",  # Let the model decide when to use tools
-            temperature=0.1,     # Lower temperature for more consistent tool usage
-        )
+        # Get execution settings from kernel and configure function calling
+        settings = kernel.get_prompt_execution_settings_from_service_id(service_id=service_id)
+        settings.function_choice_behavior = FunctionChoiceBehavior.auto()
         
         agent = ChatCompletionAgent(
             kernel=kernel,
-            service=chat_completion,
             name="SREAgent",
             instructions=sre_instructions,
-            arguments=KernelArguments(settings=execution_settings)
+            arguments=KernelArguments(settings=settings)
         )
         logger.debug(f"ChatCompletionAgent created successfully for user {user_key}")
         
