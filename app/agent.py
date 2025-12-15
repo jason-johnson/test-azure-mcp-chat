@@ -7,6 +7,7 @@ from fastapi import FastAPI, Request, Form, Header
 from fastapi.responses import HTMLResponse
 from semantic_kernel.agents.chat_completion.chat_completion_agent import ChatCompletionAgent, ChatHistoryAgentThread
 from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
+from semantic_kernel.connectors.ai.open_ai import OpenAIChatPromptExecutionSettings
 from semantic_kernel.contents.chat_history import ChatHistory
 
 from azure.identity.aio import DefaultAzureCredential
@@ -288,11 +289,19 @@ Use your Azure tools to investigate, analyze, and take action as appropriate.
 """
 
         logger.debug(f"Creating ChatCompletionAgent for user {user_key}")
+        
+        # Configure execution settings to enable tool calling
+        execution_settings = OpenAIChatPromptExecutionSettings(
+            tool_choice="auto",  # Let the model decide when to use tools
+            temperature=0.1,     # Lower temperature for more consistent tool usage
+        )
+        
         agent = ChatCompletionAgent(
             kernel=kernel,
             service=chat_completion,
             name="SREAgent",
-            instructions=sre_instructions
+            instructions=sre_instructions,
+            execution_settings=execution_settings
         )
         logger.debug(f"ChatCompletionAgent created successfully for user {user_key}")
         
