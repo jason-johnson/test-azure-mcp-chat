@@ -115,6 +115,9 @@ async def get_agent_and_thread_dependency(
     
     logger.debug(f"Dependency called for user {x_ms_client_principal_id}, context {context_id}")
     
+    # Initialize thread_key early to avoid UnboundLocalError in finally block
+    thread_key = f"{x_ms_client_principal_id}:{context_id}"
+    
     try:
         logger.debug(f"Getting agent for user {x_ms_client_principal_id}")
         # Get or create agent for this user
@@ -126,8 +129,7 @@ async def get_agent_and_thread_dependency(
         await ensure_mcp_connection(azure_plugin, x_ms_client_principal_id)
         logger.debug(f"MCP connection established for user {x_ms_client_principal_id}")
         
-        # Create a unique thread key combining user and context
-        thread_key = f"{x_ms_client_principal_id}:{context_id}"
+        # Use the thread key for thread management
         logger.debug(f"Thread key: {thread_key}")
         
         # Get or create persistent thread for this user/context combination
