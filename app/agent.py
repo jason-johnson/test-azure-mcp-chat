@@ -13,6 +13,7 @@ from semantic_kernel.contents.chat_history import ChatHistory
 from azure.identity.aio import DefaultAzureCredential
 
 from semantic_kernel import Kernel
+from semantic_kernel.kernel_arguments import KernelArguments
 from semantic_kernel.connectors.mcp import MCPStreamableHttpPlugin
 from semantic_kernel.filters import FunctionInvocationContext
 from fastapi import Depends
@@ -267,6 +268,9 @@ async def init_chat(user_token: str, user_id: str) -> tuple[ChatCompletionAgent,
         )
         logger.debug(f"Azure OpenAI service created for user {user_key}")
         
+        # Add the chat completion service to the kernel
+        kernel.add_service(chat_completion)
+        
         # Define comprehensive SRE instructions
         sre_instructions = """
 Role: Azure Service Reliability Engineer (SRE)
@@ -301,7 +305,7 @@ Use your Azure tools to investigate, analyze, and take action as appropriate.
             service=chat_completion,
             name="SREAgent",
             instructions=sre_instructions,
-            execution_settings=execution_settings
+            arguments=KernelArguments(settings=execution_settings)
         )
         logger.debug(f"ChatCompletionAgent created successfully for user {user_key}")
         
