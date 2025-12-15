@@ -46,6 +46,9 @@ logging.getLogger("gunicorn").setLevel(logging.DEBUG)  # Enable gunicorn debug l
 # Disable urllib3 debug logs as they're too noisy
 logging.getLogger("urllib3").setLevel(logging.INFO)
 
+# Reduce MCP client verbosity - tool definitions are very verbose at DEBUG level
+logging.getLogger("mcp.client.streamable_http").setLevel(logging.INFO)
+
 # Keep our application logger at DEBUG level
 logger = logging.getLogger(__name__)
 
