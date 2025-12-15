@@ -26,3 +26,10 @@ resource "azurerm_cognitive_deployment" "model" {
     name = "Standard"
   }
 }
+
+# Role assignment for frontend app to access Azure OpenAI
+resource "azurerm_role_assignment" "fe_openai_user" {
+  scope                = azurerm_cognitive_account.openai.id
+  role_definition_name = "Cognitive Services OpenAI User"
+  principal_id         = azurerm_linux_web_app.python_app.identity[0].principal_id
+}
