@@ -211,6 +211,10 @@ async def init_chat(user_token: str, user_id: str) -> tuple[ChatCompletionAgent,
                    user_key in user_cache_timestamps and
                    (current_time - user_cache_timestamps[user_key]) < (CACHE_TTL_MINUTES * 60))
     
+    if user_key in user_cache_timestamps:
+        cache_age_minutes = (current_time - user_cache_timestamps[user_key]) / 60
+        logger.debug(f"Cache entry for {user_key} is {cache_age_minutes:.1f} minutes old (TTL: {CACHE_TTL_MINUTES} min)")
+    
     if cache_valid:
         logger.debug(f"Returning cached agent for user {user_key}")
         return user_agents[user_key], user_plugins[user_key]
@@ -337,6 +341,31 @@ async def chat(
     except Exception as e:
         logger.error(f"=== CHAT REQUEST ERROR === for thread {thread_key}: {str(e)}", exc_info=True)
         return {"response": f"I encountered an error while processing your request. Please try again. Error: {str(e)}", "error": True}
+
+
+@app.get("/clear-cache")
+async def clear_cache():
+    """Debug endpoint to clear user caches"""
+    global user_agents, user_plugins, user_cache_timestamps, user_threads
+    
+    count_agents = len(user_agents)
+    count_plugins = len(user_plugins)
+    count_threads = len(user_threads)
+    
+    user_agents.clear()
+    user_plugins.clear()
+    user_cache_timestamps.clear()
+    user_threads.clear()
+    
+    logger.info(f"Cleared caches: {count_agents} agents, {count_plugins} plugins, {count_threads} threads")
+    
+    return {
+        "cleared": {
+            "agents": count_agents,
+            "plugins": count_plugins, 
+            "threads": count_threads
+        }
+    }
 
 
 @app.get("/health")
