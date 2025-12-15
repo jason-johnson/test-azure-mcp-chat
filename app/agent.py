@@ -13,7 +13,7 @@ from semantic_kernel.contents.chat_history import ChatHistory
 from azure.identity.aio import DefaultAzureCredential
 
 from semantic_kernel import Kernel
-from semantic_kernel.kernel_arguments import KernelArguments
+from semantic_kernel.functions import KernelArguments
 from semantic_kernel.connectors.mcp import MCPStreamableHttpPlugin
 from semantic_kernel.filters import FunctionInvocationContext
 from fastapi import Depends
