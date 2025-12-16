@@ -523,7 +523,7 @@ async def test_mcp_connection(
         try:
             logger.info("Fetching available MCP tools...")
             # Get the kernel from the agent
-            kernel = agent._kernel if hasattr(agent, '_kernel') else None
+            kernel = agent.kernel if hasattr(agent, 'kernel') else None
             if kernel:
                 plugins = kernel.plugins
                 logger.info(f"Available plugins: {list(plugins.keys())}")
