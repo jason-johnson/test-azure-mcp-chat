@@ -8,7 +8,6 @@ from fastapi import FastAPI, Request, Form, Header
 from fastapi.responses import HTMLResponse
 from semantic_kernel.agents.chat_completion.chat_completion_agent import ChatCompletionAgent, ChatHistoryAgentThread
 from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
-from semantic_kernel.connectors.ai.open_ai import OpenAIChatPromptExecutionSettings
 from semantic_kernel.connectors.ai import FunctionChoiceBehavior
 from semantic_kernel.contents.chat_history import ChatHistory
 
@@ -349,18 +348,16 @@ async def init_chat(user_token: str, user_id: str, refresh_token: str = None) ->
         logger.debug(f"Kernel and plugins configured for user {user_key}")
 
         logger.debug(f"Creating Azure OpenAI chat completion service for user {user_key}")
-        # Add Azure OpenAI chat completion with better error handling
+        # Add Azure OpenAI chat completion with better error handling and credential support
         chat_completion = AzureChatCompletion(
-            api_key=os.getenv('AZURE_OPENAI_API_KEY'),
+            api_key=os.getenv('AZURE_OPENAI_API_KEY'),  # Will fallback to credential if not provided
             endpoint=os.getenv('AZURE_OPENAI_ENDPOINT'),
             deployment_name=os.getenv('AZURE_OPENAI_DEPLOYMENT_NAME'),
-            api_version="2024-12-01-preview"
+            api_version="2024-12-01-preview"  # Keep the original API version
         )
         logger.debug(f"Azure OpenAI service created for user {user_key}")
         
         # Add the chat completion service to the kernel
-        service_id = "azure_oai"
-        chat_completion.service_id = service_id
         kernel.add_service(chat_completion)
         
         # Define comprehensive SRE instructions
@@ -385,10 +382,6 @@ Use your Azure tools to investigate, analyze, and take action as appropriate.
 """
 
         logger.debug(f"Creating ChatCompletionAgent for user {user_key}")
-        
-        # Get execution settings from kernel and configure function calling
-        settings = kernel.get_prompt_execution_settings_from_service_id(service_id=service_id)
-        settings.function_choice_behavior = FunctionChoiceBehavior.Auto()
         
         # Ensure MCP connection is established before creating agent
         logger.debug(f"Establishing MCP connection before agent creation for user {user_key}")
@@ -433,10 +426,11 @@ Use your Azure tools to investigate, analyze, and take action as appropriate.
             logger.warning(f"MCP plugin does not have functions attribute before agent creation")
         
         agent = ChatCompletionAgent(
+            service=chat_completion,
             kernel=kernel,
             name="SREAgent", 
             instructions=sre_instructions,
-            arguments=KernelArguments(settings=settings)  # Pass execution settings as KernelArguments
+            function_choice_behavior=FunctionChoiceBehavior.Auto()  # Pass function choice behavior directly
         )
         logger.debug(f"ChatCompletionAgent created successfully for user {user_key}")
         
