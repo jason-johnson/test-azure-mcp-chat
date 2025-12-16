@@ -392,8 +392,36 @@ Use your Azure tools to investigate, analyze, and take action as appropriate.
         logger.debug(f"Establishing MCP connection before agent creation for user {user_key}")
         await ensure_mcp_connection(azure_plugin, user_key)
         
-        # Wait a moment for functions to be loaded
-        await asyncio.sleep(1)
+        # Wait longer for functions to be loaded and debug the loading process
+        logger.debug(f"Waiting for MCP functions to be loaded for user {user_key}")
+        max_attempts = 10
+        for attempt in range(max_attempts):
+            await asyncio.sleep(0.5)  # Wait half a second
+            
+            # Check if functions are available
+            if hasattr(azure_plugin, 'functions') and azure_plugin.functions:
+                available_functions = list(azure_plugin.functions.keys())
+                logger.info(f"Attempt {attempt + 1}: MCP plugin loaded {len(available_functions)} functions: {available_functions[:10]}")
+                break
+            else:
+                logger.debug(f"Attempt {attempt + 1}: No functions loaded yet. Plugin attributes: {dir(azure_plugin)}")
+                
+                # Try to force function loading if there's a method for it
+                if hasattr(azure_plugin, 'load_functions'):
+                    logger.debug(f"Attempting to force load functions for user {user_key}")
+                    try:
+                        await azure_plugin.load_functions()
+                    except Exception as load_error:
+                        logger.warning(f"Error force loading functions: {load_error}")
+        
+        # Final function count check
+        if hasattr(azure_plugin, 'functions'):
+            final_count = len(azure_plugin.functions) if azure_plugin.functions else 0
+            logger.info(f"Final function count after loading attempts: {final_count}")
+            if final_count == 0:
+                logger.error(f"MCP plugin has no functions available for user {user_key}. Plugin type: {type(azure_plugin)}")
+        else:
+            logger.error(f"MCP plugin has no 'functions' attribute for user {user_key}")
         
         # Log available functions before creating agent
         if hasattr(azure_plugin, 'functions'):
