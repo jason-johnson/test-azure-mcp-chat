@@ -388,14 +388,37 @@ Use your Azure tools to investigate, analyze, and take action as appropriate.
         settings = kernel.get_prompt_execution_settings_from_service_id(service_id=service_id)
         settings.function_choice_behavior = FunctionChoiceBehavior.Auto()
         
+        # Ensure MCP connection is established before creating agent
+        logger.debug(f"Establishing MCP connection before agent creation for user {user_key}")
+        await ensure_mcp_connection(azure_plugin, user_key)
+        
+        # Wait a moment for functions to be loaded
+        await asyncio.sleep(1)
+        
+        # Log available functions before creating agent
+        if hasattr(azure_plugin, 'functions'):
+            available_functions = list(azure_plugin.functions.keys())
+            logger.info(f"MCP plugin has {len(available_functions)} functions before agent creation: {available_functions[:5]}...")
+        else:
+            logger.warning(f"MCP plugin does not have functions attribute before agent creation")
+        
         agent = ChatCompletionAgent(
             kernel=kernel,
-            name="SREAgent",
+            name="SREAgent", 
             instructions=sre_instructions,
-            plugins=[azure_plugin],  # Pass the plugin directly to the agent
-            arguments=KernelArguments(settings=settings)
+            arguments=KernelArguments(settings=settings)  # Pass execution settings as KernelArguments
         )
         logger.debug(f"ChatCompletionAgent created successfully for user {user_key}")
+        
+        # Verify the agent has access to functions
+        if hasattr(agent, 'kernel') and hasattr(agent.kernel, 'plugins'):
+            plugin_functions = []
+            for plugin_name, plugin in agent.kernel.plugins.items():
+                if hasattr(plugin, 'functions'):
+                    plugin_functions.extend(list(plugin.functions.keys()))
+            logger.info(f"Agent kernel has access to {len(plugin_functions)} total functions")
+        else:
+            logger.warning("Agent kernel or plugins not accessible for verification")
         
         # Cache both agent and plugin for this user with timestamp
         user_agents[user_key] = agent
@@ -417,6 +440,31 @@ async def chat(
 ):
     agent, thread, thread_key = agent_thread
     logger.info(f"=== CHAT REQUEST START === Input: '{user_input}' for thread: {thread_key}")
+    
+    # Debug: Check if agent has functions available
+    try:
+        if hasattr(agent, 'kernel') and hasattr(agent.kernel, 'plugins'):
+            total_functions = 0
+            for plugin_name, plugin in agent.kernel.plugins.items():
+                if hasattr(plugin, 'functions'):
+                    func_count = len(plugin.functions)
+                    total_functions += func_count
+                    logger.info(f"Chat endpoint - Plugin '{plugin_name}' has {func_count} functions")
+            logger.info(f"Chat endpoint - Agent has access to {total_functions} total functions")
+            
+            # Check execution settings
+            if hasattr(agent, 'execution_settings'):
+                logger.info(f"Agent execution settings: {agent.execution_settings}")
+                if hasattr(agent.execution_settings, 'function_choice_behavior'):
+                    logger.info(f"Function choice behavior: {agent.execution_settings.function_choice_behavior}")
+                else:
+                    logger.warning("No function_choice_behavior in agent execution_settings")
+            else:
+                logger.warning("Agent has no execution_settings attribute")
+        else:
+            logger.warning("Chat endpoint - Agent kernel or plugins not accessible")
+    except Exception as debug_error:
+        logger.warning(f"Debug check failed: {debug_error}")
     
     try:
         logger.debug(f"Calling agent.get_response for thread {thread_key}")
@@ -616,12 +664,30 @@ async def test_mcp_connection(
                 plugins = kernel.plugins
                 logger.info(f"Available plugins: {list(plugins.keys())}")
                 mcp_functions = []
+                
+                # Wait a bit for MCP tools to be loaded if needed
+                max_wait_attempts = 5
+                wait_delay = 0.5
+                
                 for plugin_name, plugin_obj in plugins.items():
                     logger.info(f"Checking plugin: {plugin_name}")
                     if plugin_name.lower() == "azureplugin":
-                        functions = list(plugin_obj.functions.keys()) if hasattr(plugin_obj, 'functions') else []
+                        # Try multiple times to get functions as they may load asynchronously
+                        for attempt in range(max_wait_attempts):
+                            functions = list(plugin_obj.functions.keys()) if hasattr(plugin_obj, 'functions') else []
+                            if functions:
+                                break
+                            logger.debug(f"Attempt {attempt + 1}: No functions found yet, waiting {wait_delay}s...")
+                            await asyncio.sleep(wait_delay)
+                        
                         mcp_functions.extend(functions)
                         logger.info(f"Found {len(functions)} functions in MCP plugin: {functions}")
+                        
+                        # Also log some details about the plugin
+                        logger.debug(f"Plugin {plugin_name} type: {type(plugin_obj)}")
+                        logger.debug(f"Plugin {plugin_name} hasattr functions: {hasattr(plugin_obj, 'functions')}")
+                        if hasattr(plugin_obj, 'functions'):
+                            logger.debug(f"Plugin {plugin_name} functions type: {type(plugin_obj.functions)}")
                 
                 return {
                     "status": "success",
