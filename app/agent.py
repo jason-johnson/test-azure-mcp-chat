@@ -327,12 +327,14 @@ async def init_chat(user_token: str, user_id: str, refresh_token: str = None) ->
         azure_creds = DefaultAzureCredential()
         logger.debug(f"Azure credentials created successfully for user {user_key}")
         logger.debug(f"Creating MCP plugin for user {user_key}")
-        # Create MCP plugin with user token for OBO authentication
+        # Create MCP plugin with user token for OBO authentication and improved settings
         headers = {"Authorization": f"Bearer {user_token}"}
         azure_plugin = MCPStreamableHttpPlugin(
             name="AzurePlugin",
             description="Azure Resources Plugin",
-            load_prompts=False,
+            load_tools=True,  # Explicitly load tools
+            load_prompts=False,  # Skip prompts to avoid hanging issues
+            request_timeout=30,  # Add timeout for reliability
             url=os.getenv('MCP_URL', 'http://localhost:5008'),
             headers=headers
         )
