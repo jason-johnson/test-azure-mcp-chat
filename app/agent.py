@@ -115,7 +115,8 @@ user_threads: dict[str, ChatHistoryAgentThread] = {}
 async def get_agent_and_thread_dependency(
     context_id: str = Form("default"),
     x_ms_client_principal_id: str = Header(..., alias="x-ms-client-principal-id"),
-    x_ms_token_aad_access_token: str = Header(..., alias="x-ms-token-aad-access-token")
+    x_ms_token_aad_access_token: str = Header(..., alias="x-ms-token-aad-access-token"),
+    x_ms_token_aad_refresh_token: str = Header(None, alias="x-ms-token-aad-refresh-token")
 ) -> AsyncGenerator[tuple[ChatCompletionAgent, ChatHistoryAgentThread], None]:
     """FastAPI dependency to get or create agent and thread with automatic cleanup"""
     
@@ -127,7 +128,7 @@ async def get_agent_and_thread_dependency(
     try:
         logger.debug(f"Getting agent for user {x_ms_client_principal_id}")
         # Get or create agent for this user
-        agent, azure_plugin = await init_chat(x_ms_token_aad_access_token, x_ms_client_principal_id)
+        agent, azure_plugin = await init_chat(x_ms_token_aad_access_token, x_ms_client_principal_id, x_ms_token_aad_refresh_token)
         logger.debug(f"Agent retrieved successfully for user {x_ms_client_principal_id}")
         
         logger.debug(f"Ensuring MCP connection for user {x_ms_client_principal_id}")
@@ -201,7 +202,36 @@ async def ensure_mcp_connection(plugin: MCPStreamableHttpPlugin, user_id: str):
     return False
 
 
-async def init_chat(user_token: str, user_id: str) -> tuple[ChatCompletionAgent, MCPStreamableHttpPlugin]:
+async def refresh_access_token(refresh_token: str, user_id: str) -> str:
+    """Refresh access token using Azure App Service authentication refresh endpoint"""
+    try:
+        import httpx
+        
+        # App Service auth refresh endpoint
+        refresh_url = "/.auth/refresh"
+        headers = {"Authorization": f"Bearer {refresh_token}"}
+        
+        async with httpx.AsyncClient() as client:
+            response = await client.post(refresh_url, headers=headers)
+            response.raise_for_status()
+            
+            # Parse the response to extract new access token
+            auth_headers = response.headers
+            new_access_token = auth_headers.get("x-ms-token-aad-access-token")
+            
+            if new_access_token:
+                logger.info(f"Successfully refreshed token for user {user_id}")
+                return new_access_token
+            else:
+                logger.warning(f"No access token in refresh response for user {user_id}")
+                return None
+                
+    except Exception as e:
+        logger.warning(f"Token refresh failed for user {user_id}: {e}")
+        return None
+
+
+async def init_chat(user_token: str, user_id: str, refresh_token: str = None) -> Tuple[ChatCompletionAgent, MCPStreamableHttpPlugin]:
     global user_agents, user_plugins, user_cache_timestamps
     
     # Create cache key that includes token signature to handle token changes
@@ -224,6 +254,23 @@ async def init_chat(user_token: str, user_id: str) -> tuple[ChatCompletionAgent,
             if current_timestamp >= exp_timestamp:
                 token_expired = True
                 logger.warning(f"Token for user {user_id} is expired (exp: {exp_timestamp}, now: {current_timestamp})")
+                
+                # Attempt token refresh if refresh token is available
+                if refresh_token:
+                    logger.info(f"Attempting to refresh expired token for user {user_id}")
+                    new_access_token = await refresh_access_token(refresh_token, user_id)
+                    if new_access_token:
+                        user_token = new_access_token
+                        token_expired = False
+                        logger.info(f"Token successfully refreshed for user {user_id}")
+                        # Recalculate cache key with new token
+                        token_hash = hashlib.md5(user_token.encode()).hexdigest()[:8]
+                        user_key = f"{user_id}:{token_hash}"
+                        logger.debug(f"Updated cache key after refresh: {user_key}")
+                    else:
+                        logger.warning(f"Token refresh failed for user {user_id}, will recreate with expired token")
+                else:
+                    logger.warning(f"No refresh token available for user {user_id}")
     except Exception as e:
         logger.warning(f"Could not check token expiration for user {user_id}: {e}")
     
@@ -501,7 +548,8 @@ async def test_agent_creation(
 @app.get("/debug/test-mcp")
 async def test_mcp_connection(
     x_ms_client_principal_id: str = Header(None, alias="x-ms-client-principal-id"),
-    x_ms_token_aad_access_token: str = Header(None, alias="x-ms-token-aad-access-token")
+    x_ms_token_aad_access_token: str = Header(None, alias="x-ms-token-aad-access-token"),
+    x_ms_token_aad_refresh_token: str = Header(None, alias="x-ms-token-aad-refresh-token")
 ):
     """Test endpoint to check MCP server connection and functionality"""
     logger.info("=== MCP TEST REQUEST ===")
@@ -530,7 +578,7 @@ async def test_mcp_connection(
     
     try:
         # Create agent and plugin
-        agent, plugin = await init_chat(user_token, user_id)
+        agent, plugin = await init_chat(user_token, user_id, x_ms_token_aad_refresh_token)
         logger.info(f"Agent and plugin created: {agent.name}, {plugin.name}")
         
         # Test MCP connection
