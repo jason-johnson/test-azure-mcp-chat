@@ -14,6 +14,8 @@ This repository is a Semantic Kernel agent application that connects to remote a
 4. Monitor ADO pipeline (auto-triggers on push)
 5. Verify via logs: `az webapp log tail --name $(az webapp list --resource-group rg-mcpchat-dev-chn-main --query "[?contains(name, 'fe')].name" -o tsv) --resource-group rg-mcpchat-dev-chn-main`
 
+**⚠️ IMPORTANT: Never use `az webapp log download` - the zip file will be huge and cause problems. Use `az webapp log tail` or other non-download methods to check logs.**
+
 ### Current Debug Context
 - Issue: Semantic Kernel MCPStreamableHttpPlugin reports 0 functions despite successful MCP backend connection
 - Enhanced debugging added to `test_mcp_connection()` in `app/agent.py`
