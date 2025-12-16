@@ -11,7 +11,8 @@ from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
 from semantic_kernel.connectors.ai import FunctionChoiceBehavior
 from semantic_kernel.contents.chat_history import ChatHistory
 
-from azure.identity.aio import DefaultAzureCredential
+from azure.identity.aio import DefaultAzureCredential as AsyncDefaultAzureCredential
+from azure.identity import DefaultAzureCredential
 
 from semantic_kernel import Kernel
 from semantic_kernel.functions import KernelArguments
@@ -323,8 +324,8 @@ async def init_chat(user_token: str, user_id: str, refresh_token: str = None) ->
     try:
         # Create fresh Azure credentials for this user
         logger.debug(f"Creating fresh Azure credentials for user {user_key}")
-        azure_creds = DefaultAzureCredential()
-        logger.debug(f"Azure credentials created successfully for user {user_key}")
+        # We'll use DefaultAzureCredential directly in the services - no need to extract tokens manually
+        logger.debug(f"Azure credentials will be created automatically for user {user_key}")
         logger.debug(f"Creating MCP plugin for user {user_key}")
         # Create MCP plugin with user token for OBO authentication and improved settings
         headers = {"Authorization": f"Bearer {user_token}"}
@@ -348,12 +349,12 @@ async def init_chat(user_token: str, user_id: str, refresh_token: str = None) ->
         logger.debug(f"Kernel and plugins configured for user {user_key}")
 
         logger.debug(f"Creating Azure OpenAI chat completion service for user {user_key}")
-        # Add Azure OpenAI chat completion with better error handling
+        # Use DefaultAzureCredential directly - it handles token management automatically
         chat_completion = AzureChatCompletion(
-            api_key=os.getenv('AZURE_OPENAI_API_KEY'),  # API key for Azure OpenAI service
-            endpoint=os.getenv('AZURE_OPENAI_ENDPOINT'),
             deployment_name=os.getenv('AZURE_OPENAI_DEPLOYMENT_NAME'),
-            api_version="2024-12-01-preview"  # Keep the original API version
+            endpoint=os.getenv('AZURE_OPENAI_ENDPOINT'),
+            credential=DefaultAzureCredential(),  # This handles token refreshing automatically
+            api_version="2024-12-01-preview"
         )
         logger.debug(f"Azure OpenAI service created for user {user_key}")
         
