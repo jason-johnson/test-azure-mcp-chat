@@ -2,6 +2,7 @@ import os
 import logging
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
+from typing import Tuple
 
 from fastapi import FastAPI, Request, Form, Header
 from fastapi.responses import HTMLResponse
