@@ -210,16 +210,34 @@ async def init_chat(user_token: str, user_id: str) -> tuple[ChatCompletionAgent,
     
     logger.debug(f"init_chat called for user: {user_id}, cache_key: {user_key}")
     
-    # Check if cached instances exist and are not expired
+    # Check token expiration first
+    token_expired = False
+    try:
+        import base64
+        import json
+        token_parts = user_token.split('.')
+        if len(token_parts) >= 2:
+            payload = base64.urlsafe_b64decode(token_parts[1] + '==')
+            token_data = json.loads(payload)
+            exp_timestamp = token_data.get('exp', 0)
+            current_timestamp = time.time()
+            if current_timestamp >= exp_timestamp:
+                token_expired = True
+                logger.warning(f"Token for user {user_id} is expired (exp: {exp_timestamp}, now: {current_timestamp})")
+    except Exception as e:
+        logger.warning(f"Could not check token expiration for user {user_id}: {e}")
+    
+    # Check if cached instances exist and are not expired (both TTL and token expiration)
     current_time = time.time()
     cache_valid = (user_key in user_agents and 
                    user_key in user_plugins and 
                    user_key in user_cache_timestamps and
-                   (current_time - user_cache_timestamps[user_key]) < (CACHE_TTL_MINUTES * 60))
+                   (current_time - user_cache_timestamps[user_key]) < (CACHE_TTL_MINUTES * 60) and
+                   not token_expired)
     
     if user_key in user_cache_timestamps:
         cache_age_minutes = (current_time - user_cache_timestamps[user_key]) / 60
-        logger.debug(f"Cache entry for {user_key} is {cache_age_minutes:.1f} minutes old (TTL: {CACHE_TTL_MINUTES} min)")
+        logger.debug(f"Cache entry for {user_key} is {cache_age_minutes:.1f} minutes old (TTL: {CACHE_TTL_MINUTES} min), token_expired: {token_expired}")
     
     if cache_valid:
         logger.debug(f"Returning cached agent for user {user_key}")
@@ -227,7 +245,8 @@ async def init_chat(user_token: str, user_id: str) -> tuple[ChatCompletionAgent,
     
     # Clear expired cache entries
     if user_key in user_cache_timestamps:
-        logger.info(f"Cache expired for user {user_key}, recreating agent and plugin")
+        reason = "token expired" if token_expired else "TTL expired"
+        logger.info(f"Cache invalid for user {user_key} ({reason}), recreating agent and plugin")
         user_agents.pop(user_key, None)
         user_plugins.pop(user_key, None)
         user_cache_timestamps.pop(user_key, None)
