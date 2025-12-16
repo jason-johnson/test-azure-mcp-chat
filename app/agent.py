@@ -348,9 +348,9 @@ async def init_chat(user_token: str, user_id: str, refresh_token: str = None) ->
         logger.debug(f"Kernel and plugins configured for user {user_key}")
 
         logger.debug(f"Creating Azure OpenAI chat completion service for user {user_key}")
-        # Add Azure OpenAI chat completion with better error handling and credential support
+        # Add Azure OpenAI chat completion with better error handling
         chat_completion = AzureChatCompletion(
-            api_key=os.getenv('AZURE_OPENAI_API_KEY'),  # Will fallback to credential if not provided
+            api_key=os.getenv('AZURE_OPENAI_API_KEY'),  # API key for Azure OpenAI service
             endpoint=os.getenv('AZURE_OPENAI_ENDPOINT'),
             deployment_name=os.getenv('AZURE_OPENAI_DEPLOYMENT_NAME'),
             api_version="2024-12-01-preview"  # Keep the original API version
