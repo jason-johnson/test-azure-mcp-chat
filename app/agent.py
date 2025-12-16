@@ -204,30 +204,41 @@ async def ensure_mcp_connection(plugin: MCPStreamableHttpPlugin, user_id: str):
 
 
 async def refresh_access_token(refresh_token: str, user_id: str) -> str:
-    """Refresh access token using Azure App Service authentication refresh endpoint"""
+    """Refresh access token using Microsoft identity platform token endpoint"""
     try:
         import httpx
         
-        # Get the current host to construct the absolute URL
-        # In Azure App Service, we can use the website hostname
-        website_hostname = os.getenv('WEBSITE_HOSTNAME')
-        if website_hostname:
-            refresh_url = f"https://{website_hostname}/.auth/refresh"
-        else:
-            # Fallback to localhost for local development
-            refresh_url = "http://localhost:8080/.auth/refresh"
+        # Use Microsoft identity platform token endpoint directly
+        # Get tenant ID from environment or decode it from the existing token
+        tenant_id = os.getenv('TENANT_ID') or '9412b47a-813f-4d21-85a5-7772f28bf719'  # Fallback from logs
+        client_id = os.getenv('AZURE_CLIENT_ID') or '4835f9b9-7b7f-433a-acd1-0545bd15b7cb'  # Frontend app client ID
+        client_secret = os.getenv('MICROSOFT_PROVIDER_AUTHENTICATION_SECRET')  # Client secret from Key Vault
         
-        headers = {"Authorization": f"Bearer {refresh_token}"}
+        if not client_secret:
+            logger.warning(f"No client secret available for token refresh for user {user_id} - MICROSOFT_PROVIDER_AUTHENTICATION_SECRET not found")
+            return None
+            
+        token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
         
-        logger.debug(f"Attempting token refresh for user {user_id} at {refresh_url}")
+        # Standard OAuth2 refresh token request
+        data = {
+            'client_id': client_id,
+            'client_secret': client_secret,
+            'grant_type': 'refresh_token',
+            'refresh_token': refresh_token,
+            'scope': 'openid profile email offline_access api://1a9ee35a-715e-40a6-b14c-087f3edf7589/Mcp.Tools.ReadWrite'
+        }
+        
+        headers = {'Content-Type': 'application/x-www-form-urlencoded'}
+        
+        logger.debug(f"Attempting token refresh for user {user_id} via Microsoft identity platform")
         
         async with httpx.AsyncClient() as client:
-            response = await client.post(refresh_url, headers=headers)
+            response = await client.post(token_url, data=data, headers=headers)
             response.raise_for_status()
             
-            # Parse the response to extract new access token
-            auth_headers = response.headers
-            new_access_token = auth_headers.get("x-ms-token-aad-access-token")
+            token_response = response.json()
+            new_access_token = token_response.get('access_token')
             
             if new_access_token:
                 logger.info(f"Successfully refreshed token for user {user_id}")
