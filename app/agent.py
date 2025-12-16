@@ -208,9 +208,18 @@ async def refresh_access_token(refresh_token: str, user_id: str) -> str:
     try:
         import httpx
         
-        # App Service auth refresh endpoint
-        refresh_url = "/.auth/refresh"
+        # Get the current host to construct the absolute URL
+        # In Azure App Service, we can use the website hostname
+        website_hostname = os.getenv('WEBSITE_HOSTNAME')
+        if website_hostname:
+            refresh_url = f"https://{website_hostname}/.auth/refresh"
+        else:
+            # Fallback to localhost for local development
+            refresh_url = "http://localhost:8080/.auth/refresh"
+        
         headers = {"Authorization": f"Bearer {refresh_token}"}
+        
+        logger.debug(f"Attempting token refresh for user {user_id} at {refresh_url}")
         
         async with httpx.AsyncClient() as client:
             response = await client.post(refresh_url, headers=headers)
