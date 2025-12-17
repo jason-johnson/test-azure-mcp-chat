@@ -148,6 +148,17 @@ resource "azuread_application" "mcp" {
     }
   }
 
+  # Azure Service Management API - Required for OBO flow to call Azure Resource Manager APIs
+  # See: https://learn.microsoft.com/en-us/powershell/module/microsoft.entra.applications/new-entraapplication
+  required_resource_access {
+    resource_app_id = "797f4846-ba00-4fd7-ba43-dac1f8f63013" # Azure Service Management API
+
+    resource_access {
+      id   = "41094075-9dad-400e-a0bd-54e686782033" # user_impersonation
+      type = "Scope"
+    }
+  }
+
   web {
     redirect_uris = ["https://${local.mcp_app_name}.azurewebsites.net/.auth/login/aad/callback"]
 
