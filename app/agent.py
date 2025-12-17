@@ -191,10 +191,32 @@ async def ensure_mcp_connection(plugin: MCPStreamableHttpPlugin, user_id: str):
         try:
             logger.debug(f"MCP connection attempt {attempt + 1} for user {user_id}")
             await plugin.connect()
-            logger.debug(f"MCP connection successful for user {user_id}")
+            logger.info(f"MCP connection successful for user {user_id}")
+            
+            # Log details about the plugin state after connection
+            logger.info(f"Plugin session after connect: {plugin.session}")
+            logger.info(f"Plugin load_tools_flag: {plugin.load_tools_flag}")
+            
+            # Check if functions were loaded
+            if hasattr(plugin, 'functions'):
+                func_count = len(plugin.functions) if plugin.functions else 0
+                logger.info(f"Functions loaded after connect: {func_count}")
+                if func_count > 0:
+                    logger.info(f"Function names: {list(plugin.functions.keys())[:10]}")
+            
+            # Try to manually trigger load_tools if no functions were loaded
+            if hasattr(plugin, 'functions') and (not plugin.functions or len(plugin.functions) == 0):
+                logger.info(f"No functions loaded automatically, attempting manual load_tools()")
+                try:
+                    await plugin.load_tools()
+                    func_count_after = len(plugin.functions) if plugin.functions else 0
+                    logger.info(f"Functions after manual load_tools: {func_count_after}")
+                except Exception as load_err:
+                    logger.error(f"Error during manual load_tools: {load_err}", exc_info=True)
+            
             return True
         except Exception as e:
-            logger.warning(f"MCP connection attempt {attempt + 1} failed for user {user_id}: {e}")
+            logger.warning(f"MCP connection attempt {attempt + 1} failed for user {user_id}: {e}", exc_info=True)
             if attempt == max_retries - 1:
                 logger.error(f"Failed to establish MCP connection for user {user_id} after {max_retries} attempts")
                 raise
@@ -340,12 +362,57 @@ async def init_chat(user_token: str, user_id: str, refresh_token: str = None) ->
         )
         logger.debug(f"MCP plugin created successfully for user {user_key}")
 
+        # IMPORTANT: Connect and load tools BEFORE adding to kernel
+        # The kernel.add_plugin() scans for @kernel_function decorated methods, which are only
+        # added by load_tools() after connect(). If we add the plugin before connecting,
+        # no functions will be found.
+        logger.debug(f"Establishing MCP connection before adding plugin to kernel for user {user_key}")
+        await ensure_mcp_connection(azure_plugin, user_key)
+        
+        # Wait for functions to be loaded after connection
+        logger.debug(f"Waiting for MCP functions to be loaded for user {user_key}")
+        max_attempts = 10
+        functions_loaded = False
+        for attempt in range(max_attempts):
+            await asyncio.sleep(0.5)  # Wait half a second
+            
+            # Check for @kernel_function decorated methods (these are added by load_tools)
+            tool_methods = [attr for attr in dir(azure_plugin) 
+                          if not attr.startswith('_') and 
+                          hasattr(getattr(azure_plugin, attr, None), '__kernel_function__')]
+            
+            if tool_methods:
+                logger.info(f"Attempt {attempt + 1}: MCP plugin loaded {len(tool_methods)} tool methods: {tool_methods[:10]}...")
+                functions_loaded = True
+                break
+            else:
+                logger.debug(f"Attempt {attempt + 1}: No @kernel_function methods yet. Checking plugin state...")
+                # The attributes exist but may not be kernel_function decorated yet
+                callable_attrs = [attr for attr in dir(azure_plugin) 
+                                 if not attr.startswith('_') and 
+                                 callable(getattr(azure_plugin, attr, None)) and
+                                 attr not in ('connect', 'close', 'load_tools', 'load_prompts', 'call_tool', 'get_mcp_client', 'get_prompt', 'message_handler', 'sampling_callback', 'logging_callback')]
+                logger.debug(f"Callable attributes (potential tools): {len(callable_attrs)}")
+        
+        if not functions_loaded:
+            logger.warning(f"MCP tools may not have loaded properly for user {user_key}")
+
         logger.debug(f"Creating kernel for user {user_key}")
         kernel = Kernel()
         kernel.add_filter("function_invocation", function_invocation_filter)
         
-        # Add the Azure MCP plugin to the kernel so the agent can access its functions
+        # NOW add the MCP plugin to the kernel AFTER tools are loaded
+        # This ensures kernel.add_plugin() can find the @kernel_function decorated methods
+        logger.debug(f"Adding MCP plugin to kernel for user {user_key}")
         kernel.add_plugin(azure_plugin)
+        
+        # Verify functions were added to kernel
+        if "AzurePlugin" in kernel.plugins:
+            plugin_funcs = list(kernel.plugins["AzurePlugin"].functions.keys()) if hasattr(kernel.plugins["AzurePlugin"], 'functions') else []
+            logger.info(f"Kernel plugin 'AzurePlugin' has {len(plugin_funcs)} functions: {plugin_funcs[:10]}...")
+        else:
+            logger.warning(f"AzurePlugin not found in kernel plugins after add_plugin()")
+        
         logger.debug(f"Kernel and plugins configured for user {user_key}")
 
         logger.debug(f"Creating Azure OpenAI chat completion service for user {user_key}")
@@ -383,48 +450,6 @@ Use your Azure tools to investigate, analyze, and take action as appropriate.
 """
 
         logger.debug(f"Creating ChatCompletionAgent for user {user_key}")
-        
-        # Ensure MCP connection is established before creating agent
-        logger.debug(f"Establishing MCP connection before agent creation for user {user_key}")
-        await ensure_mcp_connection(azure_plugin, user_key)
-        
-        # Wait longer for functions to be loaded and debug the loading process
-        logger.debug(f"Waiting for MCP functions to be loaded for user {user_key}")
-        max_attempts = 10
-        for attempt in range(max_attempts):
-            await asyncio.sleep(0.5)  # Wait half a second
-            
-            # Check if functions are available
-            if hasattr(azure_plugin, 'functions') and azure_plugin.functions:
-                available_functions = list(azure_plugin.functions.keys())
-                logger.info(f"Attempt {attempt + 1}: MCP plugin loaded {len(available_functions)} functions: {available_functions[:10]}")
-                break
-            else:
-                logger.debug(f"Attempt {attempt + 1}: No functions loaded yet. Plugin attributes: {dir(azure_plugin)}")
-                
-                # Try to force function loading if there's a method for it
-                if hasattr(azure_plugin, 'load_functions'):
-                    logger.debug(f"Attempting to force load functions for user {user_key}")
-                    try:
-                        await azure_plugin.load_functions()
-                    except Exception as load_error:
-                        logger.warning(f"Error force loading functions: {load_error}")
-        
-        # Final function count check
-        if hasattr(azure_plugin, 'functions'):
-            final_count = len(azure_plugin.functions) if azure_plugin.functions else 0
-            logger.info(f"Final function count after loading attempts: {final_count}")
-            if final_count == 0:
-                logger.error(f"MCP plugin has no functions available for user {user_key}. Plugin type: {type(azure_plugin)}")
-        else:
-            logger.error(f"MCP plugin has no 'functions' attribute for user {user_key}")
-        
-        # Log available functions before creating agent
-        if hasattr(azure_plugin, 'functions'):
-            available_functions = list(azure_plugin.functions.keys())
-            logger.info(f"MCP plugin has {len(available_functions)} functions before agent creation: {available_functions[:5]}...")
-        else:
-            logger.warning(f"MCP plugin does not have functions attribute before agent creation")
         
         agent = ChatCompletionAgent(
             service=chat_completion,
@@ -724,7 +749,10 @@ async def test_mcp_connection(
                     "mcp_connected": True,
                     "available_functions": mcp_functions[:10],  # Limit to first 10 for readability
                     "total_function_count": len(mcp_functions),
-                    "cached_agents": len(user_agents)
+                    "cached_agents": len(user_agents),
+                    "plugin_session_active": plugin.session is not None,
+                    "plugin_load_tools_flag": plugin.load_tools_flag if hasattr(plugin, 'load_tools_flag') else "unknown",
+                    "plugin_attributes": [attr for attr in dir(plugin) if not attr.startswith('_')][:20]
                 }
             else:
                 logger.warning("Could not access kernel from agent")
