@@ -23,7 +23,8 @@ resource "azurerm_cognitive_deployment" "model" {
   }
 
   sku {
-    name = "Standard"
+    name     = "Standard"
+    capacity = 100  # 100K TPM - needed for 137 MCP tools (~100K tokens per request)
   }
 }
 
