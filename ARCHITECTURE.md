@@ -240,9 +240,34 @@ The application uses **Azure AD authentication** with **On-Behalf-Of (OBO)** flo
 2. **Deploy Python App Job** (`Deploy Python Application`)
    - Depends on Terraform job completion
    - Sets up Python 3.13
-   - Installs dependencies from `requirements.txt`
-   - Archives application to ZIP
-   - Deploys to Azure Web App
+   - Creates a virtual environment (`antenv`) in the build agent
+   - Installs dependencies from `requirements.txt` into the venv
+   - Archives the entire `app/` directory (including `antenv/`) to ZIP
+   - Deploys ZIP to Azure Web App via `AzureWebApp@1` task
+
+#### Virtual Environment Deployment
+
+The Python application runs inside a **virtual environment** (`antenv`) that is:
+
+1. **Created during ADO build**: `python -m venv antenv`
+2. **Packaged with the app**: The entire venv is included in the deployment ZIP
+3. **Used at runtime**: Azure App Service runs gunicorn from within the deployed venv
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Azure App Service                             │
+│  /home/site/wwwroot/                                            │
+│  ├── agent.py              # Main application                   │
+│  ├── requirements.txt                                           │
+│  └── antenv/               # Virtual environment (deployed)     │
+│      └── lib/python3.13/site-packages/                          │
+│          ├── semantic_kernel/                                   │
+│          ├── fastapi/                                           │
+│          └── ... (all dependencies)                             │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Why a venv?** Azure App Service has a system Python installation that may conflict with application dependencies. By deploying the venv, we ensure consistent package versions.
 
 ### How to Deploy
 
@@ -430,3 +455,4 @@ azure-mcp-chat/
 ├── ARCHITECTURE.md                # This file
 └── README.md                      # Project readme
 ```
+
