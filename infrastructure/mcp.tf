@@ -45,7 +45,7 @@ resource "azurerm_linux_web_app" "mcp_app" {
       client_secret_setting_name = "MICROSOFT_PROVIDER_AUTHENTICATION_SECRET"
       tenant_auth_endpoint       = "https://login.microsoftonline.com/${data.azuread_client_config.current.tenant_id}/v2.0/"
       allowed_audiences          = ["api://${azuread_application.mcp.client_id}"]
-      allowed_applications       = [azuread_application.fe.client_id]
+      allowed_applications       = [azuread_application.fe.client_id, var.azure_cli_client_id]
     }
 
     login {
