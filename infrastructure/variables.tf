@@ -27,3 +27,9 @@ variable "acr_branches" {
   type        = list(string)
   default     = ["main"]
 }
+
+variable "azure_cli_client_id" {
+  description = "Azure CLI client ID for local development pre-authorization"
+  type        = string
+  default     = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
+}

@@ -174,6 +174,16 @@ resource "azuread_application_pre_authorized" "mcp" {
   ]
 }
 
+# Pre-authorize Azure CLI for local development testing
+resource "azuread_application_pre_authorized" "mcp_azure_cli" {
+  application_id       = azuread_application.mcp.id
+  authorized_client_id = var.azure_cli_client_id
+
+  permission_ids = [
+    random_uuid.fe_user_impersonation_id.result,
+  ]
+}
+
 resource "azuread_application_identifier_uri" "mcp" {
   application_id = azuread_application.mcp.id
   identifier_uri = "api://${azuread_application.mcp.client_id}"
