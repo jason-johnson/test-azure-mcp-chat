@@ -356,7 +356,7 @@ async def init_chat(user_token: str, user_id: str, refresh_token: str = None) ->
             description="Azure Resources Plugin",
             load_tools=True,  # Explicitly load tools
             load_prompts=False,  # Skip prompts to avoid hanging issues
-            request_timeout=30,  # Add timeout for reliability
+            request_timeout=120,  # Increased timeout for MCP server tool execution
             url=os.getenv('MCP_URL', 'http://localhost:5008'),
             headers=headers
         )
@@ -401,6 +401,48 @@ async def init_chat(user_token: str, user_id: str, refresh_token: str = None) ->
         kernel = Kernel()
         kernel.add_filter("function_invocation", function_invocation_filter)
         
+        # OpenAI has a maximum of 128 tools per request
+        # Filter MCP tools to stay within this limit by removing excess tools
+        MAX_TOOLS = 128
+        
+        # Priority tools that should always be kept (essential Azure operations)
+        PRIORITY_TOOLS = {
+            'subscription_list',  # Essential for listing subscriptions
+            'group_list',  # Essential for listing resource groups
+            'monitor_metrics_query',  # Essential for monitoring
+            'monitor_workspace_log_query',  # Essential for log queries
+            'storage_account_get',  # Common storage operation
+            'storage_blob_get',  # Common storage operation
+        }
+        
+        tool_methods = [attr for attr in dir(azure_plugin) 
+                       if not attr.startswith('_') and 
+                       hasattr(getattr(azure_plugin, attr, None), '__kernel_function__')]
+        
+        if len(tool_methods) > MAX_TOOLS:
+            logger.warning(f"MCP plugin has {len(tool_methods)} tools, exceeds OpenAI limit of {MAX_TOOLS}")
+            # Remove excess tool methods from the plugin to stay within limit
+            # Keep priority tools first, then fill remaining slots alphabetically
+            priority_available = PRIORITY_TOOLS & set(tool_methods)
+            non_priority = sorted(set(tool_methods) - priority_available)
+            remaining_slots = MAX_TOOLS - len(priority_available)
+            tools_to_keep = priority_available | set(non_priority[:remaining_slots])
+            tools_to_remove = set(tool_methods) - tools_to_keep
+            logger.info(f"Keeping {len(priority_available)} priority tools: {sorted(priority_available)}")
+            logger.info(f"Removing {len(tools_to_remove)} excess tools: {sorted(tools_to_remove)}")
+            
+            for tool_name in tools_to_remove:
+                try:
+                    delattr(azure_plugin, tool_name)
+                except Exception as e:
+                    logger.warning(f"Failed to remove tool {tool_name}: {e}")
+            
+            # Verify remaining tools
+            remaining_tools = [attr for attr in dir(azure_plugin) 
+                             if not attr.startswith('_') and 
+                             hasattr(getattr(azure_plugin, attr, None), '__kernel_function__')]
+            logger.info(f"Filtered to {len(remaining_tools)} tools (limit: {MAX_TOOLS})")
+        
         # NOW add the MCP plugin to the kernel AFTER tools are loaded
         # This ensures kernel.add_plugin() can find the @kernel_function decorated methods
         logger.debug(f"Adding MCP plugin to kernel for user {user_key}")
@@ -432,21 +474,27 @@ async def init_chat(user_token: str, user_id: str, refresh_token: str = None) ->
         sre_instructions = """
 Role: Azure Service Reliability Engineer (SRE)
 
-You are an expert Azure SRE responsible for:
-- Investigating and resolving incidents and outages
-- Responding to monitoring alerts with actionable insights
-- Proactively identifying potential issues
-- Providing technical guidance to the SRE team
-- Executing Azure operations directly when requested
+You are an expert Azure SRE with direct access to Azure operations via tools.
+
+CRITICAL: When a user asks about Azure resources, subscriptions, or any Azure data:
+- IMMEDIATELY call the appropriate tool to get the data
+- DO NOT ask clarifying questions
+- DO NOT say you need more information
+- Just call the tool and return the results
+
+For example:
+- "list my subscriptions" → call subscription_list tool immediately
+- "show my resource groups" → call group_list tool immediately  
+- "check storage accounts" → call storage_account_get tool immediately
+
+You have 128 Azure tools available. Use them proactively to investigate, analyze, and take action.
 
 Behavior Guidelines:
-1. Always use available tools to gather data before providing answers
-2. When users ask about Azure tasks, execute them directly rather than providing instructions
+1. Always use available tools FIRST before responding
+2. Execute Azure operations directly - never just provide instructions
 3. Provide clear, actionable recommendations based on data
 4. Include relevant metrics, logs, or configuration details in your responses
 5. Prioritize system reliability and security in all recommendations
-
-Use your Azure tools to investigate, analyze, and take action as appropriate.
 """
 
         logger.debug(f"Creating ChatCompletionAgent for user {user_key}")
