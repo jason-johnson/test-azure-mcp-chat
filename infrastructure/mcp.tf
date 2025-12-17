@@ -30,7 +30,7 @@ resource "azurerm_linux_web_app" "mcp_app" {
       docker_registry_url = "https://mcr.microsoft.com"
     }
 
-    app_command_line = "--transport http --outgoing-auth-strategy UseOnBehalfOf --mode all --read-only"
+    app_command_line = "--transport http --outgoing-auth-strategy UseOnBehalfOf --mode all --read-only --debug"
 
     always_on = false
   }
@@ -57,7 +57,8 @@ resource "azurerm_linux_web_app" "mcp_app" {
     "WEBSITES_ENABLE_APP_SERVICE_STORAGE"             = "false"
     "ASPNETCORE_ENVIRONMENT"                          = "Production"
     "ASPNETCORE_URLS"                                 = "http://+:8080"
-    "AZURE_TOKEN_CREDENTIALS"                         = "managedidentitycredential"
+    # Removed: AZURE_TOKEN_CREDENTIALS=managedidentitycredential conflicts with --outgoing-auth-strategy UseOnBehalfOf
+    # The OBO strategy needs to use the incoming user token, not managed identity
     "AZURE_MCP_INCLUDE_PRODUCTION_CREDENTIALS"        = "true"
     "AZURE_MCP_COLLECT_TELEMETRY"                     = "true"
     "AzureAd__Instance"                               = "https://login.microsoftonline.com/"

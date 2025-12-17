@@ -356,7 +356,7 @@ async def init_chat(user_token: str, user_id: str, refresh_token: str = None) ->
             description="Azure Resources Plugin",
             load_tools=True,  # Explicitly load tools
             load_prompts=False,  # Skip prompts to avoid hanging issues
-            request_timeout=120,  # Increased timeout for MCP server tool execution
+            request_timeout=600,  # Increased timeout for MCP server tool execution
             url=os.getenv('MCP_URL', 'http://localhost:5008'),
             headers=headers
         )
