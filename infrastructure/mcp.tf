@@ -26,8 +26,8 @@ resource "azurerm_linux_web_app" "mcp_app" {
 
   site_config {
     application_stack {
-      docker_image_name   = "azure-sdk/azure-mcp:2.0.0-beta.7"
-      docker_registry_url = "https://mcr.microsoft.com"
+      docker_image_name   = "jason0077/azure-mcp:2.0.0-alpha"
+      docker_registry_url = "https://index.docker.io"
     }
 
     app_command_line = "--transport http --outgoing-auth-strategy UseOnBehalfOf --mode all --read-only --debug"
