@@ -64,6 +64,7 @@ resource "azurerm_linux_web_app" "mcp_app" {
     "AzureAd__Instance"                               = "https://login.microsoftonline.com/"
     "AzureAd__TenantId"                               = data.azuread_client_config.current.tenant_id
     "AzureAd__ClientId"                               = azuread_application.mcp.client_id
+    "AzureAd__ClientSecret"                           = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.mcp_secret.id})"
     "AZURE_LOG_LEVEL"                                 = "Verbose"
     "AZURE_MCP_DANGEROUSLY_DISABLE_HTTPS_REDIRECTION" = "true"
     "WEBSITES_PORT"                                   = "8080"
