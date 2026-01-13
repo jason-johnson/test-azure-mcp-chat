@@ -64,11 +64,11 @@ jobs:
           targetType: 'inline'
           script: |
             cd $(Build.SourcesDirectory)/app
-            python -m venv antenv
+            curl -LsSf https://astral.sh/uv/install.sh | sh
+            source $HOME/.local/bin/env
+            uv venv antenv
             source antenv/bin/activate
-            python -m pip install --upgrade pip
-            pip install setuptools  
-            pip install -r requirements.txt
+            uv pip install .
           workingDirectory: '$(Build.SourcesDirectory)'
       
       - task: ArchiveFiles@2
