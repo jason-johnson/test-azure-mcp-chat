@@ -30,7 +30,7 @@ resource "azurerm_linux_web_app" "mcp_app" {
       docker_registry_url = "https://index.docker.io"
     }
 
-    app_command_line = "--transport http --outgoing-auth-strategy UseOnBehalfOf --mode all --read-only --debug"
+    app_command_line = "--transport http --outgoing-auth-strategy UseOnBehalfOf --mode namespace --read-only --debug"
 
     always_on = false
   }
