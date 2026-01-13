@@ -65,7 +65,6 @@ jobs:
           script: |
             cd $(Build.SourcesDirectory)/app
             curl -LsSf https://astral.sh/uv/install.sh | sh
-            source $HOME/.local/bin/env
             uv venv antenv
             source antenv/bin/activate
             uv pip install .
