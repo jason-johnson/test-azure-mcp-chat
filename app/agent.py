@@ -140,21 +140,11 @@ async def get_agent_and_thread_dependency(
         # Use the thread key for thread management
         logger.debug(f"Thread key: {thread_key}")
         
-        # Get or create persistent thread for this user/context combination
+        # Get existing thread or None for first call
+        # Per Semantic Kernel docs: pass None for first call, then use response.thread for subsequent calls
         thread = user_threads.get(thread_key)
         if thread is None:
-            logger.debug(f"Creating new thread for {thread_key}")
-            # Create new thread with proper system message from agent
-            chat_history = ChatHistory(
-                messages=[],
-                system_message=agent.instructions
-            )
-            thread = ChatHistoryAgentThread(
-                chat_history=chat_history, 
-                thread_id=thread_key  # Use stable thread ID for persistence
-            )
-            user_threads[thread_key] = thread
-            logger.info(f"Created new persistent thread for {thread_key}")
+            logger.info(f"No existing thread for {thread_key} - will create on first response")
         else:
             logger.debug(f"Using existing thread for {thread_key}")
         
@@ -477,48 +467,46 @@ Role: Azure Service Reliability Engineer (SRE)
 
 You are an expert Azure SRE with direct access to Azure operations via tools.
 
-CRITICAL RULES:
-1. UNDERSTAND THE QUESTION FIRST - Read the user's request carefully before calling any tool
-2. CALL THE CORRECT TOOL - Match the tool to what the user is asking about
-3. MAINTAIN CONTEXT - Remember the subscription/resource group from previous messages in the conversation
-4. ANSWER THE ACTUAL QUESTION - Don't just dump data, answer what was asked
+⚠️ MANDATORY TOOL SELECTION PROCESS - FOLLOW THIS EXACTLY:
 
-TOOL SELECTION GUIDE:
-- Questions about WEB APPS → use webapp_list or webapp_show (NOT group_list)
-- Questions about RESOURCE GROUPS → use group_list
-- Questions about SUBSCRIPTIONS → use subscription_list  
-- Questions about RESOURCES IN A RESOURCE GROUP → use resource_list with the resource_group parameter
-- Questions about STORAGE → use storage_account_list or storage_account_show
-- Questions about VMs → use vm_list or vm_show
-- Questions about METRICS/MONITORING → use monitor_metrics_query
-- Questions about LOGS → use monitor_workspace_log_query
+STEP 1: IDENTIFY what resource type the user is asking about:
+- "web apps" or "app service" → USE appservice tool
+- "subscriptions" → USE subscription_list tool  
+- "resource groups" → USE group_list tool
+- "AKS" or "kubernetes" → USE aks tool
+- "storage" → USE storage tool
+- "container registry" or "ACR" → USE acr tool
 
-CONTEXT AWARENESS:
-- If the user mentions a specific subscription, use that subscription ID for all subsequent queries
-- If the user mentions a specific resource group, use that resource group name for subsequent queries
-- If the user asks a follow-up question, use the context from previous messages
+STEP 2: For appservice, aks, storage, acr, monitor (hierarchical tools):
+- You MUST provide the "intent" parameter
+- Example: {"intent": "list all web apps in subscription X"}
 
-RESPONSE FORMAT:
-- Answer the specific question asked
-- Include relevant details (count, names, configuration)
-- If you can't find the exact resource type, explain what tools you have available
+STEP 3: For subscription_list, group_list (simple tools):
+- Call directly with no special parameters
 
-EXAMPLE INTERACTIONS:
-- "how many linux web apps?" → call webapp_list, filter by kind containing 'linux', count results
-- "resources in rg-example?" → call resource_list with resource_group='rg-example'
-- "show me storage accounts" → call storage_account_list
+🚫 COMMON MISTAKES TO AVOID:
+- DO NOT call subscription_list when user asks about web apps
+- DO NOT call subscription_list when user asks about AKS clusters
+- DO NOT default to subscription_list for everything
 
-TOOL NAMESPACE:
-Tools are organized in namespace mode (e.g., webapp_list, storage_account_show, monitor_metrics_query).
-You have over 40 Azure tools available covering subscriptions, resource groups, resources, 
-web apps, storage, monitoring, and more. Use the RIGHT tool for each question.
+✅ CORRECT TOOL MAPPING:
+| User asks about...     | Use this tool    | With parameter                    |
+|------------------------|------------------|-----------------------------------|
+| web apps               | appservice       | intent="list web apps"            |
+| subscriptions          | subscription_list| (none needed)                     |
+| resource groups        | group_list       | subscription=<id>                 |
+| AKS clusters           | aks              | intent="list AKS clusters"        |
+| storage accounts       | storage          | intent="list storage accounts"    |
 
-Behavior Guidelines:
-1. Read and understand the question before calling tools
-2. Call the appropriate tool that matches what user is asking about
-3. Provide clear, direct answers to the question asked
-4. Maintain context from previous messages in the conversation
-5. If multiple tools are needed, call them in sequence and combine results
+EXAMPLE - User says "list all web apps in subscription 2daa7beb-ac1d-473e-84e2-f3cd40e584de":
+→ This mentions "web apps" so use appservice tool
+→ Call: AzurePlugin-appservice(intent="list all web apps", parameters={"subscription": "2daa7beb-ac1d-473e-84e2-f3cd40e584de"})
+
+EXAMPLE - User says "list my subscriptions":
+→ This mentions "subscriptions" so use subscription_list tool
+→ Call: AzurePlugin-subscription_list()
+
+Now process the user's request using the correct tool.
 """
 
         logger.debug(f"Creating ChatCompletionAgent for user {user_key}")
@@ -591,8 +579,15 @@ async def chat(
     try:
         logger.debug(f"Calling agent.get_response for thread {thread_key}")
         # Get response from the agent - this automatically manages chat history
-        response = await agent.get_response(message=user_input, thread=thread)
+        # NOTE: parameter is 'messages' (plural), not 'message'
+        response = await agent.get_response(messages=user_input, thread=thread)
         logger.debug(f"Agent response received for thread {thread_key}")
+        
+        # Store the thread from response for subsequent calls
+        # Per Semantic Kernel docs: use response.thread for conversation continuity
+        if hasattr(response, 'thread') and response.thread is not None:
+            user_threads[thread_key] = response.thread
+            logger.info(f"Stored response thread for {thread_key}")
         
         # Log the response content
         if hasattr(response, 'content'):
