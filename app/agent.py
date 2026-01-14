@@ -339,8 +339,25 @@ async def init_chat(user_token: str, user_id: str, refresh_token: str = None) ->
         logger.debug(f"Creating fresh Azure credentials for user {user_key}")
         # We'll use DefaultAzureCredential directly in the services - no need to extract tokens manually
         logger.debug(f"Azure credentials will be created automatically for user {user_key}")
+        
+        # Create kernel and chat completion service FIRST
+        # This is needed for MCP sampling callbacks (hierarchical tools use sampling to discover commands)
+        logger.debug(f"Creating kernel with chat completion service for MCP sampling support")
+        kernel = Kernel()
+        kernel.add_filter("function_invocation", function_invocation_filter)
+        
+        chat_completion = AzureChatCompletion(
+            deployment_name=os.getenv('AZURE_OPENAI_DEPLOYMENT_NAME'),
+            endpoint=os.getenv('AZURE_OPENAI_ENDPOINT'),
+            credential=DefaultAzureCredential(),
+            api_version="2024-12-01-preview"
+        )
+        kernel.add_service(chat_completion)
+        logger.debug(f"Kernel with chat completion service created for MCP sampling")
+        
         logger.debug(f"Creating MCP plugin for user {user_key}")
         # Create MCP plugin with user token for OBO authentication and improved settings
+        # Pass the kernel so the plugin can use it for sampling callbacks (required for hierarchical tools)
         headers = {"Authorization": f"Bearer {user_token}"}
         azure_plugin = MCPStreamableHttpPlugin(
             name="AzurePlugin",
@@ -349,7 +366,8 @@ async def init_chat(user_token: str, user_id: str, refresh_token: str = None) ->
             load_prompts=False,  # Skip prompts to avoid hanging issues
             request_timeout=600,  # Increased timeout for MCP server tool execution
             url=os.getenv('MCP_URL', 'http://localhost:5008'),
-            headers=headers
+            headers=headers,
+            kernel=kernel  # Pass kernel for sampling callback support
         )
         logger.debug(f"MCP plugin created successfully for user {user_key}")
 
@@ -388,10 +406,6 @@ async def init_chat(user_token: str, user_id: str, refresh_token: str = None) ->
         if not functions_loaded:
             logger.warning(f"MCP tools may not have loaded properly for user {user_key}")
 
-        logger.debug(f"Creating kernel for user {user_key}")
-        kernel = Kernel()
-        kernel.add_filter("function_invocation", function_invocation_filter)
-        
         # OpenAI has a maximum of 128 tools per request
         # Filter MCP tools to stay within this limit by removing excess tools
         MAX_TOOLS = 128
@@ -448,65 +462,23 @@ async def init_chat(user_token: str, user_id: str, refresh_token: str = None) ->
         
         logger.debug(f"Kernel and plugins configured for user {user_key}")
 
-        logger.debug(f"Creating Azure OpenAI chat completion service for user {user_key}")
-        # Use DefaultAzureCredential directly - it handles token management automatically
-        chat_completion = AzureChatCompletion(
-            deployment_name=os.getenv('AZURE_OPENAI_DEPLOYMENT_NAME'),
-            endpoint=os.getenv('AZURE_OPENAI_ENDPOINT'),
-            credential=DefaultAzureCredential(),  # This handles token refreshing automatically
-            api_version="2024-12-01-preview"
-        )
-        logger.debug(f"Azure OpenAI service created for user {user_key}")
-        
-        # Add the chat completion service to the kernel
-        kernel.add_service(chat_completion)
-        
         # Define comprehensive SRE instructions
         sre_instructions = """
 Role: Azure Service Reliability Engineer (SRE)
 
-You are an expert Azure SRE with direct access to Azure operations via tools.
+You are an expert Azure SRE assistant with direct access to Azure operations through tools.
 
-⚠️ MANDATORY TOOL SELECTION PROCESS - FOLLOW THIS EXACTLY:
+Your capabilities include:
+- Querying and managing Azure resources (subscriptions, resource groups, web apps, AKS, storage, etc.)
+- Diagnosing issues and troubleshooting Azure resources
+- Providing operational insights and recommendations
 
-STEP 1: IDENTIFY what resource type the user is asking about:
-- "web apps" or "app service" → USE appservice tool
-- "subscriptions" → USE subscription_list tool  
-- "resource groups" → USE group_list tool
-- "AKS" or "kubernetes" → USE aks tool
-- "storage" → USE storage tool
-- "container registry" or "ACR" → USE acr tool
+When responding to requests:
+1. Use the appropriate tool based on what the user is asking about
+2. For hierarchical tools (appservice, aks, storage, etc.), provide an "intent" parameter describing the operation
+3. Present results clearly and offer to help with follow-up actions
 
-STEP 2: For appservice, aks, storage, acr, monitor (hierarchical tools):
-- You MUST provide the "intent" parameter
-- Example: {"intent": "list all web apps in subscription X"}
-
-STEP 3: For subscription_list, group_list (simple tools):
-- Call directly with no special parameters
-
-🚫 COMMON MISTAKES TO AVOID:
-- DO NOT call subscription_list when user asks about web apps
-- DO NOT call subscription_list when user asks about AKS clusters
-- DO NOT default to subscription_list for everything
-
-✅ CORRECT TOOL MAPPING:
-| User asks about...     | Use this tool    | With parameter                    |
-|------------------------|------------------|-----------------------------------|
-| web apps               | appservice       | intent="list web apps"            |
-| subscriptions          | subscription_list| (none needed)                     |
-| resource groups        | group_list       | subscription=<id>                 |
-| AKS clusters           | aks              | intent="list AKS clusters"        |
-| storage accounts       | storage          | intent="list storage accounts"    |
-
-EXAMPLE - User says "list all web apps in subscription 2daa7beb-ac1d-473e-84e2-f3cd40e584de":
-→ This mentions "web apps" so use appservice tool
-→ Call: AzurePlugin-appservice(intent="list all web apps", parameters={"subscription": "2daa7beb-ac1d-473e-84e2-f3cd40e584de"})
-
-EXAMPLE - User says "list my subscriptions":
-→ This mentions "subscriptions" so use subscription_list tool
-→ Call: AzurePlugin-subscription_list()
-
-Now process the user's request using the correct tool.
+Always be helpful, accurate, and proactive in assisting with Azure operations.
 """
 
         logger.debug(f"Creating ChatCompletionAgent for user {user_key}")
