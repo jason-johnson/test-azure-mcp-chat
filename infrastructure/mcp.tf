@@ -30,7 +30,7 @@ resource "azurerm_linux_web_app" "mcp_app" {
       docker_registry_url = "https://mcr.microsoft.com"
     }
 
-    app_command_line = "--transport http --outgoing-auth-strategy UseOnBehalfOf --mode namespace --read-only --debug"
+    app_command_line = "--transport http --outgoing-auth-strategy UseOnBehalfOf --mode consolidated --read-only --debug"
 
     always_on = false
   }
