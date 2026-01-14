@@ -52,6 +52,7 @@ resource "azurerm_linux_web_app" "python_app" {
     "AZURE_OPENAI_ENDPOINT"                    = azurerm_cognitive_account.openai.endpoint
     "AZURE_OPENAI_DEPLOYMENT_NAME"             = azurerm_cognitive_deployment.model.name
     "MCP_URL"                                  = "https://${azurerm_linux_web_app.mcp_app.default_hostname}"
+    "MCP_API_CLIENT_ID"                        = azuread_application.mcp.client_id
     "WEBSITE_AUTH_AAD_ALLOWED_TENANTS"         = data.azuread_client_config.current.tenant_id
     "MICROSOFT_PROVIDER_AUTHENTICATION_SECRET" = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.fe_secret.id})"
   }, local.app_insights_app_settings)

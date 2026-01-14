@@ -241,6 +241,7 @@ async def refresh_access_token(refresh_token: str, user_id: str) -> str:
             return None
             
         token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+        mcp_api_client_id = os.getenv('MCP_API_CLIENT_ID')
         
         # Standard OAuth2 refresh token request
         data = {
@@ -248,7 +249,7 @@ async def refresh_access_token(refresh_token: str, user_id: str) -> str:
             'client_secret': client_secret,
             'grant_type': 'refresh_token',
             'refresh_token': refresh_token,
-            'scope': 'openid profile email offline_access api://1a9ee35a-715e-40a6-b14c-087f3edf7589/Mcp.Tools.ReadWrite'
+            'scope': f'openid profile email offline_access api://{mcp_api_client_id}/Mcp.Tools.ReadWrite'
         }
         
         headers = {'Content-Type': 'application/x-www-form-urlencoded'}
