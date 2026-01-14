@@ -30,7 +30,7 @@ resource "azurerm_linux_web_app" "mcp_app" {
       docker_registry_url = "https://mcr.microsoft.com"
     }
 
-    app_command_line = "--transport http --outgoing-auth-strategy UseOnBehalfOf --mode all --namespace storage --namespace monitor --namespace keyvault --namespace cosmos --namespace sql --namespace group --namespace subscription --namespace appservice --namespace functionapp --namespace acr --namespace aks --read-only --debug"
+    app_command_line = "--transport http --outgoing-auth-strategy UseOnBehalfOf --mode all --namespace storage --namespace monitor --namespace keyvault --namespace cosmos --namespace sql --namespace group --namespace subscription --namespace functionapp --namespace acr --namespace aks --namespace extension --read-only --debug"
 
     always_on = false
   }
