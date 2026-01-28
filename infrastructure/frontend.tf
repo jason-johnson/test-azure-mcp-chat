@@ -28,33 +28,23 @@ resource "azurerm_linux_web_app" "python_app" {
     health_check_eviction_time_in_min = 2
   }
 
-  auth_settings_v2 {
-    auth_enabled           = true
-    default_provider       = "azureactivedirectory"
-    require_authentication = true
-    excluded_paths         = ["/health", "/ping", "/alive"]
-
-    active_directory_v2 {
-      client_id                  = azuread_application.fe.client_id
-      client_secret_setting_name = "MICROSOFT_PROVIDER_AUTHENTICATION_SECRET"
-      tenant_auth_endpoint       = "https://login.microsoftonline.com/${data.azuread_client_config.current.tenant_id}/v2.0/"
-      login_parameters = {
-        "scope" = "openid offline_access api://${azuread_application.mcp.client_id}/Mcp.Tools.ReadWrite"
-      }
-    }
-
-    login {
-      token_store_enabled = true
-    }
-  }
+  # MSAL authentication is handled by the application itself (auth.py)
+  # No Easy Auth (auth_settings_v2) needed
 
   app_settings = merge({
-    "AZURE_OPENAI_ENDPOINT"                    = azurerm_cognitive_account.openai.endpoint
-    "AZURE_OPENAI_DEPLOYMENT_NAME"             = azurerm_cognitive_deployment.model.name
-    "MCP_URL"                                  = "https://${azurerm_linux_web_app.mcp_app.default_hostname}"
-    "MCP_API_CLIENT_ID"                        = azuread_application.mcp.client_id
-    "WEBSITE_AUTH_AAD_ALLOWED_TENANTS"         = data.azuread_client_config.current.tenant_id
+    # Azure OpenAI settings
+    "AZURE_OPENAI_ENDPOINT"        = azurerm_cognitive_account.openai.endpoint
+    "AZURE_OPENAI_DEPLOYMENT_NAME" = azurerm_cognitive_deployment.model.name
+
+    # MCP server settings
+    "MCP_URL"           = "https://${azurerm_linux_web_app.mcp_app.default_hostname}"
+    "MCP_API_CLIENT_ID" = azuread_application.mcp.client_id
+
+    # MSAL authentication settings
+    "AZURE_CLIENT_ID"                          = azuread_application.fe.client_id
+    "TENANT_ID"                                = data.azuread_client_config.current.tenant_id
     "MICROSOFT_PROVIDER_AUTHENTICATION_SECRET" = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.fe_secret.id})"
+    "APP_BASE_URL"                             = "https://${local.frontend_app_name}.azurewebsites.net"
   }, local.app_insights_app_settings)
 
   logs {

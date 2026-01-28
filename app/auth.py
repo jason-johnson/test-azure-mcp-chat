@@ -358,7 +358,8 @@ def get_auth_config() -> AuthConfig:
     """Load auth configuration from environment variables"""
     
     # Determine redirect URI based on environment
-    base_url = os.getenv("BASE_URL", "http://localhost:8000")
+    # Use APP_BASE_URL to avoid conflicts with other libraries that might use BASE_URL
+    base_url = os.getenv("APP_BASE_URL", "http://localhost:8000")
     redirect_uri = f"{base_url}/auth/callback"
     
     return AuthConfig(
