@@ -34,7 +34,7 @@ This app uses **MSAL (Microsoft Authentication Library)** for direct OAuth 2.0 a
 The following App Registrations are required (created by Terraform):
 
 1. **Frontend App Registration** (`azuread_application.fe`)
-   - Client ID: `AZURE_CLIENT_ID` env var
+   - Client ID: `MSAL_CLIENT_ID` env var (NOT `AZURE_CLIENT_ID` to avoid conflict with DefaultAzureCredential)
    - Client Secret: `MICROSOFT_PROVIDER_AUTHENTICATION_SECRET` env var
    - Redirect URIs:
      - `http://localhost:8000/auth/callback` (local development)
@@ -107,11 +107,11 @@ uvicorn agent:app --reload --port 8000
 
 **Required environment variables:**
 ```bash
-export AZURE_CLIENT_ID="your-frontend-client-id"
+export MSAL_CLIENT_ID="your-frontend-client-id"  # Note: NOT AZURE_CLIENT_ID to avoid conflict with DefaultAzureCredential
 export MICROSOFT_PROVIDER_AUTHENTICATION_SECRET="your-client-secret"
 export TENANT_ID="your-tenant-id"
 export MCP_API_CLIENT_ID="your-mcp-api-client-id"
-export BASE_URL="http://localhost:8000"  # or production URL
+export APP_BASE_URL="http://localhost:8000"  # or production URL
 export SESSION_SECRET_KEY="a-random-secret-key"  # optional, generates random if not set
 ```
 
@@ -124,15 +124,17 @@ Then visit `http://localhost:8000` in a browser - you'll be redirected to Micros
 | Variable | Description | Required |
 |----------|-------------|----------|
 | `DEV_MODE` | Set to `true` for bearer token auth mode | No (default: false) |
-| `AZURE_CLIENT_ID` | Frontend app registration client ID | Yes |
+| `MSAL_CLIENT_ID` | Frontend app registration client ID (for MSAL auth) | Yes |
 | `MICROSOFT_PROVIDER_AUTHENTICATION_SECRET` | Frontend app client secret | Yes (production) |
 | `TENANT_ID` | Azure AD tenant ID | Yes |
 | `MCP_API_CLIENT_ID` | MCP server app registration client ID | Yes |
 | `MCP_URL` | URL of the MCP server | Yes |
-| `BASE_URL` | Base URL of this app (for redirect URI) | Yes (production) |
+| `APP_BASE_URL` | Base URL of this app (for redirect URI) | Yes (production) |
 | `SESSION_SECRET_KEY` | Secret for signing session cookies | Recommended |
 | `AZURE_OPENAI_ENDPOINT` | Azure OpenAI endpoint | Yes |
 | `AZURE_OPENAI_DEPLOYMENT_NAME` | Azure OpenAI model deployment name | Yes |
+
+**Note:** We use `MSAL_CLIENT_ID` instead of `AZURE_CLIENT_ID` because `DefaultAzureCredential` uses `AZURE_CLIENT_ID` for service principal/managed identity auth, which would conflict with our MSAL browser auth client ID.
 
 ### Current Debug Context
 - Issue: Semantic Kernel MCPStreamableHttpPlugin reports 0 functions despite successful MCP backend connection

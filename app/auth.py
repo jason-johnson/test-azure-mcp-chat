@@ -350,7 +350,7 @@ def get_auth_config() -> AuthConfig:
     redirect_uri = f"{base_url}/auth/callback"
     
     return AuthConfig(
-        client_id=os.getenv("AZURE_CLIENT_ID", "4835f9b9-7b7f-433a-acd1-0545bd15b7cb"),
+        client_id=os.getenv("MSAL_CLIENT_ID", os.getenv("AZURE_CLIENT_ID", "4835f9b9-7b7f-433a-acd1-0545bd15b7cb")),
         client_secret=os.getenv("MICROSOFT_PROVIDER_AUTHENTICATION_SECRET"),
         tenant_id=os.getenv("TENANT_ID", "9412b47a-813f-4d21-85a5-7772f28bf719"),
         redirect_uri=redirect_uri,

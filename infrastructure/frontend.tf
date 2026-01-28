@@ -44,7 +44,8 @@ resource "azurerm_linux_web_app" "python_app" {
     "MCP_API_CLIENT_ID" = azuread_application.mcp.client_id
 
     # MSAL authentication settings
-    "AZURE_CLIENT_ID"                          = azuread_application.fe.client_id
+    # Note: Using MSAL_CLIENT_ID instead of AZURE_CLIENT_ID to avoid conflict with DefaultAzureCredential
+    "MSAL_CLIENT_ID"                           = azuread_application.fe.client_id
     "TENANT_ID"                                = data.azuread_client_config.current.tenant_id
     "MICROSOFT_PROVIDER_AUTHENTICATION_SECRET" = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.fe_secret.id})"
     "APP_BASE_URL"                             = "https://${local.frontend_app_name}.azurewebsites.net"
