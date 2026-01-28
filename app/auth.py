@@ -49,11 +49,9 @@ class AuthConfig(BaseModel):
         if not self.authority:
             self.authority = f"https://login.microsoftonline.com/{self.tenant_id}"
         if not self.scopes:
+            # MSAL automatically adds openid, profile, offline_access
+            # We only need to specify our custom API scope
             self.scopes = [
-                "openid",
-                "profile", 
-                "email",
-                "offline_access",
                 f"api://{self.mcp_api_client_id}/Mcp.Tools.ReadWrite"
             ]
 
