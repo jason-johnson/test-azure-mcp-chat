@@ -106,12 +106,13 @@ app = FastAPI(lifespan=lifespan)
 # In DEV_MODE, we skip middleware and accept bearer tokens directly
 if not DEV_MODE:
     from auth import AuthMiddleware, get_auth_config, get_secret_key, AuthManager
-    from auth_routes import router as auth_router
+    from auth_routes import setup_auth_routes
     _config = get_auth_config()
     _secret = get_secret_key()
     _auth_manager = AuthManager(_config, _secret)
     app.add_middleware(AuthMiddleware, auth_manager=_auth_manager)
-    app.include_router(auth_router)
+    # Use setup_auth_routes to properly initialize the global auth manager AND include routes
+    setup_auth_routes(app)
     logger.info("MSAL auth middleware and routes added")
 
 # Add middleware to log all requests
