@@ -74,7 +74,7 @@ DEV_MODE=true uvicorn agent:app --reload --port 8000
 **Test with bearer token (similar to the old approach):**
 ```bash
 # Get a token for the MCP API
-ACCESS_TOKEN=$(az account get-access-token --resource "api://f29dd31f-0747-46d7-8cbc-c846e315eb88" --query accessToken -o tsv)
+ACCESS_TOKEN=$(az account get-access-token --resource "api://923d2ffc-9173-49c6-94bb-06a2dee07a50" --query accessToken -o tsv)
 
 # Test the chat endpoint
 curl -X POST http://localhost:8000/chat \
