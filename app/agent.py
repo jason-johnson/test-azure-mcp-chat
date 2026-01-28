@@ -111,8 +111,8 @@ if not DEV_MODE:
     _secret = get_secret_key()
     _auth_manager = AuthManager(_config, _secret)
     app.add_middleware(AuthMiddleware, auth_manager=_auth_manager)
-    # Use setup_auth_routes to properly initialize the global auth manager AND include routes
-    setup_auth_routes(app)
+    # Pass the SAME auth_manager to routes so they share the session store
+    setup_auth_routes(app, _auth_manager)
     logger.info("MSAL auth middleware and routes added")
 
 # Add middleware to log all requests

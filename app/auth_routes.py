@@ -38,28 +38,23 @@ def get_auth_manager() -> AuthManager:
     return _auth_manager
 
 
-def setup_auth_routes(app) -> AuthManager:
+def setup_auth_routes(app, auth_manager: AuthManager) -> None:
     """
-    Initialize auth manager and add routes to the app.
+    Configure auth routes to use the provided auth manager.
     
     Args:
         app: FastAPI application instance
-        
-    Returns:
-        AuthManager instance for use with middleware
+        auth_manager: AuthManager instance to use for authentication
     """
     global _auth_manager
     
-    config = get_auth_config()
-    secret_key = get_secret_key()
-    
-    _auth_manager = AuthManager(config, secret_key)
+    # Use the provided auth_manager (same instance as middleware)
+    _auth_manager = auth_manager
     
     # Include the router
     app.include_router(router)
     
     logger.info("Direct auth routes configured")
-    return _auth_manager
 
 
 @router.get("/login")
