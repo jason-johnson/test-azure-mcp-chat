@@ -29,7 +29,10 @@ resource "azurerm_linux_web_app" "python_app" {
   }
 
   # MSAL authentication is handled by the application itself (auth.py)
-  # No Easy Auth (auth_settings_v2) needed
+  # Explicitly disable Easy Auth (auth_settings_v2)
+  auth_settings {
+    enabled = false
+  }
 
   app_settings = merge({
     # Azure OpenAI settings
