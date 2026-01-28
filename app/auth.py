@@ -92,9 +92,11 @@ class AuthManager:
         self._sessions: dict[str, UserSession] = {}
         
         # PKCE state store (code_verifier by state)
-        self._pkce_store: dict[str, str] = {}
+        # Store for CSRF protection (state -> True mapping)
+        self._state_store: dict[str, bool] = {}
         
         # Initialize MSAL confidential client
+        # Note: We're a confidential client with client_secret, so PKCE is not required
         self._msal_app = msal.ConfidentialClientApplication(
             client_id=config.client_id,
             client_credential=config.client_secret,
@@ -103,14 +105,6 @@ class AuthManager:
         )
         
         logger.info(f"AuthManager initialized for tenant {config.tenant_id}")
-    
-    def _generate_pkce_pair(self) -> tuple[str, str]:
-        """Generate PKCE code_verifier and code_challenge"""
-        code_verifier = secrets.token_urlsafe(64)[:128]  # 43-128 chars
-        code_challenge = base64.urlsafe_b64encode(
-            hashlib.sha256(code_verifier.encode()).digest()
-        ).decode().rstrip("=")
-        return code_verifier, code_challenge
     
     def get_auth_url(self, state: Optional[str] = None) -> tuple[str, str]:
         """
@@ -122,16 +116,13 @@ class AuthManager:
         if not state:
             state = secrets.token_urlsafe(32)
         
-        # Generate PKCE pair
-        code_verifier, code_challenge = self._generate_pkce_pair()
-        self._pkce_store[state] = code_verifier
+        # Store state for CSRF protection
+        self._state_store[state] = True
         
         auth_url = self._msal_app.get_authorization_request_url(
             scopes=self.config.scopes,
             state=state,
-            redirect_uri=self.config.redirect_uri,
-            code_challenge=code_challenge,
-            code_challenge_method="S256"
+            redirect_uri=self.config.redirect_uri
         )
         
         logger.debug(f"Generated auth URL with state: {state}")
@@ -151,9 +142,8 @@ class AuthManager:
         Raises:
             HTTPException: If authentication fails
         """
-        # Retrieve and remove PKCE verifier
-        code_verifier = self._pkce_store.pop(state, None)
-        if not code_verifier:
+        # Validate state for CSRF protection
+        if not self._state_store.pop(state, None):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid state parameter - possible CSRF attack"
@@ -163,8 +153,7 @@ class AuthManager:
         result = self._msal_app.acquire_token_by_authorization_code(
             code=code,
             scopes=self.config.scopes,
-            redirect_uri=self.config.redirect_uri,
-            code_verifier=code_verifier
+            redirect_uri=self.config.redirect_uri
         )
         
         if "error" in result:
