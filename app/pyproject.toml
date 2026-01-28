@@ -18,5 +18,7 @@ dependencies = [
     "uvicorn>=0.34.0",
     "fastapi",
     "python-multipart",
-    "azure-identity"]
+    "azure-identity",
+    "msal>=1.28.0",
+    "itsdangerous>=2.1.0"]
 

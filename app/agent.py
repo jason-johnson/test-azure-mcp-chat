@@ -2,7 +2,7 @@ import os
 import logging
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
-from typing import Tuple
+from typing import Tuple, Optional
 
 from fastapi import FastAPI, Request, Form, Header
 from fastapi.responses import HTMLResponse
@@ -27,6 +27,11 @@ from datetime import datetime, timezone
 
 # Load environment variables
 load_dotenv()
+
+# Dev mode configuration
+# Set DEV_MODE=true for local development with bearer token auth (like: az account get-access-token)
+# In production, MSAL-based browser auth is used
+DEV_MODE = os.getenv("DEV_MODE", "false").lower() == "true"
 
 # Configure logging to provide maximum visibility for debugging
 logging.basicConfig(
@@ -67,11 +72,24 @@ user_plugins: dict[str, MCPStreamableHttpPlugin] = {}
 user_cache_timestamps: dict[str, float] = {}  # Track when each cache entry was created
 CACHE_TTL_MINUTES = 45  # Cache TTL in minutes (less than typical 60-min token lifetime)
 
+# Global auth manager for MSAL auth
+_auth_manager = None
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _auth_manager
+    
     # Startup
     logger.info("=== APPLICATION STARTUP BEGINNING ===")
+    logger.info(f"Dev mode: {DEV_MODE}")
+    
+    if DEV_MODE:
+        logger.info("Running in DEV_MODE - accepting bearer tokens via Authorization header")
+        logger.info("Use: az account get-access-token --resource 'api://{MCP_API_CLIENT_ID}' to get a token")
+    else:
+        logger.info("Running in production mode with MSAL browser authentication")
+    
     logger.info("Azure credentials will be initialized on first user request")
     logger.info("=== APPLICATION STARTUP COMPLETED ===")
     logger.info("FastAPI app is now ready to serve requests")
@@ -83,6 +101,18 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+# Add auth middleware and routes for MSAL auth (production mode)
+# In DEV_MODE, we skip middleware and accept bearer tokens directly
+if not DEV_MODE:
+    from auth import AuthMiddleware, get_auth_config, get_secret_key, AuthManager
+    from auth_routes import router as auth_router
+    _config = get_auth_config()
+    _secret = get_secret_key()
+    _auth_manager = AuthManager(_config, _secret)
+    app.add_middleware(AuthMiddleware, auth_manager=_auth_manager)
+    app.include_router(auth_router)
+    logger.info("MSAL auth middleware and routes added")
 
 # Add middleware to log all requests
 @app.middleware("http")
@@ -113,29 +143,50 @@ def alive():
 user_threads: dict[str, ChatHistoryAgentThread] = {}
 
 
-async def get_agent_and_thread_dependency(
+async def get_agent_and_thread_dependency_devmode(
+    request: Request,
     context_id: str = Form("default"),
-    x_ms_client_principal_id: str = Header(..., alias="x-ms-client-principal-id"),
-    x_ms_token_aad_access_token: str = Header(..., alias="x-ms-token-aad-access-token"),
-    x_ms_token_aad_refresh_token: str = Header(None, alias="x-ms-token-aad-refresh-token")
-) -> AsyncGenerator[tuple[ChatCompletionAgent, ChatHistoryAgentThread], None]:
-    """FastAPI dependency to get or create agent and thread with automatic cleanup"""
+    authorization: str = Header(None, alias="Authorization"),
+    x_user_id: str = Header("dev-user", alias="x-user-id"),
+) -> AsyncGenerator[tuple[ChatCompletionAgent, ChatHistoryAgentThread, str], None]:
+    """
+    FastAPI dependency for DEV_MODE - accepts bearer tokens via Authorization header.
     
-    logger.debug(f"Dependency called for user {x_ms_client_principal_id}, context {context_id}")
+    Usage for local testing:
+        ACCESS_TOKEN=$(az account get-access-token --resource "api://{MCP_API_CLIENT_ID}" --query accessToken -o tsv)
+        curl -X POST http://localhost:8000/chat \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
+            -H "x-user-id: test-user" \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            -d "user_input=your question here"
+    """
+    from fastapi import HTTPException, status
+    
+    # Extract bearer token
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing or invalid Authorization header. Use: Authorization: Bearer <token>"
+        )
+    
+    access_token = authorization[7:]  # Remove "Bearer " prefix
+    user_id = x_user_id
+    
+    logger.debug(f"DevMode dependency called for user {user_id}, context {context_id}")
     
     # Initialize thread_key early to avoid UnboundLocalError in finally block
-    thread_key = f"{x_ms_client_principal_id}:{context_id}"
+    thread_key = f"{user_id}:{context_id}"
     
     try:
-        logger.debug(f"Getting agent for user {x_ms_client_principal_id}")
+        logger.debug(f"Getting agent for user {user_id}")
         # Get or create agent for this user
-        agent, azure_plugin = await init_chat(x_ms_token_aad_access_token, x_ms_client_principal_id, x_ms_token_aad_refresh_token)
-        logger.debug(f"Agent retrieved successfully for user {x_ms_client_principal_id}")
+        agent, azure_plugin = await init_chat(access_token, user_id, None)
+        logger.debug(f"Agent retrieved successfully for user {user_id}")
         
-        logger.debug(f"Ensuring MCP connection for user {x_ms_client_principal_id}")
+        logger.debug(f"Ensuring MCP connection for user {user_id}")
         # Ensure MCP connection is active with retry logic
-        await ensure_mcp_connection(azure_plugin, x_ms_client_principal_id)
-        logger.debug(f"MCP connection established for user {x_ms_client_principal_id}")
+        await ensure_mcp_connection(azure_plugin, user_id)
+        logger.debug(f"MCP connection established for user {user_id}")
         
         # Use the thread key for thread management
         logger.debug(f"Thread key: {thread_key}")
@@ -152,11 +203,66 @@ async def get_agent_and_thread_dependency(
         yield agent, thread, thread_key
         
     except Exception as e:
-        logger.error(f"Error in dependency for user {x_ms_client_principal_id}: {str(e)}", exc_info=True)
+        logger.error(f"Error in dependency for user {user_id}: {str(e)}", exc_info=True)
         raise
     finally:
         # FastAPI will automatically handle cleanup here if needed
         logger.debug(f"Dependency cleanup completed for thread {thread_key}")
+
+
+async def get_agent_and_thread_dependency_msal(
+    request: Request,
+    context_id: str = Form("default"),
+) -> AsyncGenerator[tuple[ChatCompletionAgent, ChatHistoryAgentThread, str], None]:
+    """FastAPI dependency for MSAL auth mode (browser-based, session cookies)"""
+    
+    # Get user info from request.state (set by AuthMiddleware)
+    if not hasattr(request.state, 'user_session'):
+        from fastapi import HTTPException, status
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated - please login at /login"
+        )
+    
+    user_id = request.state.user_id
+    access_token = request.state.access_token
+    
+    logger.debug(f"MSAL auth dependency called for user {user_id}, context {context_id}")
+    
+    # Initialize thread_key early to avoid UnboundLocalError in finally block
+    thread_key = f"{user_id}:{context_id}"
+    
+    try:
+        logger.debug(f"Getting agent for user {user_id}")
+        # Get or create agent for this user (refresh handled by middleware)
+        agent, azure_plugin = await init_chat(access_token, user_id, None)
+        logger.debug(f"Agent retrieved successfully for user {user_id}")
+        
+        logger.debug(f"Ensuring MCP connection for user {user_id}")
+        # Ensure MCP connection is active with retry logic
+        await ensure_mcp_connection(azure_plugin, user_id)
+        logger.debug(f"MCP connection established for user {user_id}")
+        
+        # Use the thread key for thread management
+        logger.debug(f"Thread key: {thread_key}")
+        
+        # Get existing thread or None for first call
+        thread = user_threads.get(thread_key)
+        if thread is None:
+            logger.info(f"No existing thread for {thread_key} - will create on first response")
+        else:
+            logger.debug(f"Using existing thread for {thread_key}")
+        
+        logger.debug(f"Yielding agent and thread for {thread_key}")
+        yield agent, thread, thread_key
+        
+    except Exception as e:
+        logger.error(f"Error in dependency for user {user_id}: {str(e)}", exc_info=True)
+        raise
+    finally:
+        # FastAPI will automatically handle cleanup here if needed
+        logger.debug(f"Dependency cleanup completed for thread {thread_key}")
+
 
 # Function invocation filter to log function calls and responses
 
@@ -515,10 +621,16 @@ Always be helpful, accurate, and proactive in assisting with Azure operations.
         raise
 
 
+# Select the appropriate dependency based on auth mode
+# DEV_MODE: Accept bearer tokens directly (for local testing with az account get-access-token)
+# Production: Use MSAL browser-based authentication with session cookies
+_chat_dependency = get_agent_and_thread_dependency_devmode if DEV_MODE else get_agent_and_thread_dependency_msal
+
+
 @app.post("/chat")
 async def chat(
     user_input: str = Form(...),
-    agent_thread: tuple[ChatCompletionAgent, ChatHistoryAgentThread, str] = Depends(get_agent_and_thread_dependency)
+    agent_thread: tuple[ChatCompletionAgent, ChatHistoryAgentThread, str] = Depends(_chat_dependency)
 ):
     agent, thread, thread_key = agent_thread
     logger.info(f"=== CHAT REQUEST START === Input: '{user_input}' for thread: {thread_key}")
@@ -653,32 +765,56 @@ async def health_check(request: Request):
 
 @app.get("/debug/test-auth")
 async def test_auth_headers(
-    x_ms_client_principal_id: str = Header(None, alias="x-ms-client-principal-id"),
-    x_ms_token_aad_access_token: str = Header(None, alias="x-ms-token-aad-access-token")
+    request: Request,
+    authorization: str = Header(None, alias="Authorization"),
+    x_user_id: str = Header(None, alias="x-user-id"),
 ):
-    """Test endpoint to check Azure App Service authentication headers"""
-    logger.info(f"=== AUTH TEST REQUEST === User ID: {x_ms_client_principal_id}")
+    """Test endpoint to check authentication headers (works in both DEV_MODE and production)"""
+    
+    # Check for bearer token (DEV_MODE)
+    has_bearer = authorization and authorization.startswith("Bearer ")
+    token_from_header = authorization[7:] if has_bearer else None
+    
+    # Check for session (production MSAL mode)
+    has_session = hasattr(request.state, 'user_session')
+    user_from_session = request.state.user_id if has_session else None
+    
+    logger.info(f"=== AUTH TEST REQUEST === user_id: {x_user_id or user_from_session}, has_bearer: {has_bearer}, has_session: {has_session}")
     
     return {
-        "user_id": x_ms_client_principal_id,
-        "has_token": bool(x_ms_token_aad_access_token),
-        "token_length": len(x_ms_token_aad_access_token) if x_ms_token_aad_access_token else 0
+        "dev_mode": DEV_MODE,
+        "has_bearer_token": has_bearer,
+        "token_length": len(token_from_header) if token_from_header else 0,
+        "x_user_id": x_user_id,
+        "has_session": has_session,
+        "session_user_id": user_from_session,
     }
 
 
 @app.get("/debug/test-agent")
 async def test_agent_creation(
-    x_ms_client_principal_id: str = Header(None, alias="x-ms-client-principal-id"),
-    x_ms_token_aad_access_token: str = Header(None, alias="x-ms-token-aad-access-token")
+    request: Request,
+    authorization: str = Header(None, alias="Authorization"),
+    x_user_id: str = Header("test_user", alias="x-user-id"),
 ):
     """Test endpoint to check if agent can be created"""
     logger.info("=== AGENT TEST REQUEST ===")
     
-    # Use real authentication if available, otherwise fallback to dummy values
-    user_token = x_ms_token_aad_access_token if x_ms_token_aad_access_token else "dummy_token"
-    user_id = x_ms_client_principal_id if x_ms_client_principal_id else "test_user"
+    # Get token from Authorization header or session
+    if authorization and authorization.startswith("Bearer "):
+        user_token = authorization[7:]
+        user_id = x_user_id
+        auth_method = "bearer_token"
+    elif hasattr(request.state, 'access_token'):
+        user_token = request.state.access_token
+        user_id = request.state.user_id
+        auth_method = "msal_session"
+    else:
+        user_token = "dummy_token"
+        user_id = x_user_id
+        auth_method = "none"
     
-    logger.info(f"Testing agent creation for user: {user_id} (real_auth: {bool(x_ms_client_principal_id)})")
+    logger.info(f"Testing agent creation for user: {user_id} (auth_method: {auth_method})")
     
     try:
         agent, plugin = await init_chat(user_token, user_id)
@@ -689,7 +825,7 @@ async def test_agent_creation(
             "agent_name": agent.name,
             "plugin_name": plugin.name,
             "user_id": user_id,
-            "using_real_auth": bool(x_ms_client_principal_id),
+            "auth_method": auth_method,
             "cached_agents": len(user_agents)
         }
     except Exception as e:
@@ -699,27 +835,37 @@ async def test_agent_creation(
             "error": str(e),
             "error_type": type(e).__name__,
             "user_id": user_id,
-            "using_real_auth": bool(x_ms_client_principal_id)
+            "auth_method": auth_method
         }
 
 
 @app.get("/debug/test-mcp")
 async def test_mcp_connection(
-    x_ms_client_principal_id: str = Header(None, alias="x-ms-client-principal-id"),
-    x_ms_token_aad_access_token: str = Header(None, alias="x-ms-token-aad-access-token"),
-    x_ms_token_aad_refresh_token: str = Header(None, alias="x-ms-token-aad-refresh-token")
+    request: Request,
+    authorization: str = Header(None, alias="Authorization"),
+    x_user_id: str = Header("test_mcp_user", alias="x-user-id"),
 ):
     """Test endpoint to check MCP server connection and functionality"""
     logger.info("=== MCP TEST REQUEST ===")
     
-    # Use real authentication if available, otherwise fallback to dummy values
-    user_token = x_ms_token_aad_access_token if x_ms_token_aad_access_token else "dummy_token"
-    user_id = x_ms_client_principal_id if x_ms_client_principal_id else "test_mcp_user"
+    # Get token from Authorization header or session
+    if authorization and authorization.startswith("Bearer "):
+        user_token = authorization[7:]
+        user_id = x_user_id
+        auth_method = "bearer_token"
+    elif hasattr(request.state, 'access_token'):
+        user_token = request.state.access_token
+        user_id = request.state.user_id
+        auth_method = "msal_session"
+    else:
+        user_token = "dummy_token"
+        user_id = x_user_id
+        auth_method = "none"
     
-    logger.info(f"Testing MCP connection for user: {user_id} (real_auth: {bool(x_ms_client_principal_id)})")
+    logger.info(f"Testing MCP connection for user: {user_id} (auth_method: {auth_method})")
     
     # Debug: Let's decode the token to see what audience we're getting
-    if x_ms_token_aad_access_token:
+    if user_token and user_token != "dummy_token":
         import base64
         import json
         try:
@@ -736,7 +882,7 @@ async def test_mcp_connection(
     
     try:
         # Create agent and plugin
-        agent, plugin = await init_chat(user_token, user_id, x_ms_token_aad_refresh_token)
+        agent, plugin = await init_chat(user_token, user_id, None)
         logger.info(f"Agent and plugin created: {agent.name}, {plugin.name}")
         
         # Test MCP connection
@@ -783,7 +929,7 @@ async def test_mcp_connection(
                     "agent_name": agent.name,
                     "plugin_name": plugin.name,
                     "user_id": user_id,
-                    "using_real_auth": bool(x_ms_client_principal_id),
+                    "auth_method": auth_method,
                     "mcp_url": os.getenv('MCP_URL', 'not_set'),
                     "mcp_connected": True,
                     "available_functions": mcp_functions[:10],  # Limit to first 10 for readability
@@ -800,7 +946,7 @@ async def test_mcp_connection(
                     "agent_name": agent.name,
                     "plugin_name": plugin.name,
                     "user_id": user_id,
-                    "using_real_auth": bool(x_ms_client_principal_id),
+                    "auth_method": auth_method,
                     "mcp_url": os.getenv('MCP_URL', 'not_set'),
                     "mcp_connected": True,
                     "warning": "Could not enumerate functions",
@@ -814,7 +960,7 @@ async def test_mcp_connection(
                 "agent_name": agent.name,
                 "plugin_name": plugin.name,
                 "user_id": user_id,
-                "using_real_auth": bool(x_ms_client_principal_id),
+                "auth_method": auth_method,
                 "mcp_url": os.getenv('MCP_URL', 'not_set'),
                 "mcp_connected": True,
                 "warning": f"Function enumeration failed: {str(func_error)}",
@@ -828,7 +974,7 @@ async def test_mcp_connection(
             "error": str(e),
             "error_type": type(e).__name__,
             "user_id": user_id,
-            "using_real_auth": bool(x_ms_client_principal_id),
+            "auth_method": auth_method,
             "mcp_url": os.getenv('MCP_URL', 'not_set'),
             "mcp_connected": False
         }

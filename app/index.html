@@ -47,6 +47,38 @@
             border-bottom: 1px solid rgba(226, 226, 226, 0.3);
             background: linear-gradient(135deg, #e60028 0%, #c40025 100%);
             color: white;
+            position: relative;
+        }
+
+        .user-menu {
+            position: absolute;
+            top: 15px;
+            right: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .user-info {
+            color: rgba(255, 255, 255, 0.9);
+            font-size: 0.85rem;
+        }
+
+        .auth-button {
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            padding: 6px 14px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            font-family: 'Inter', sans-serif;
+            transition: all 0.2s ease;
+            text-decoration: none;
+        }
+
+        .auth-button:hover {
+            background: rgba(255, 255, 255, 0.3);
         }
           h2 {
             background: linear-gradient(135deg, #ffffff, #f8f9fa);
@@ -343,6 +375,9 @@
 </head>
 <body>
     <div class="container">        <div class="header">
+            <div class="user-menu" id="user-menu">
+                <!-- Will be populated by JavaScript based on auth state -->
+            </div>
             <h2>
                 <img src="/static/logo.png" alt="Logo" class="logo">
                 Technical Support Agent
@@ -394,7 +429,38 @@
             gfm: true,
             headerIds: false,
             mangle: false
-        });        const qidForm = document.getElementById('qid-form');
+        });
+
+        // Auth state management
+        let currentUser = null;
+
+        async function checkAuthState() {
+            const userMenu = document.getElementById('user-menu');
+            try {
+                const response = await fetch('/auth/me');
+                if (response.ok) {
+                    currentUser = await response.json();
+                    userMenu.innerHTML = `
+                        <span class="user-info">${currentUser.name || currentUser.email || 'User'}</span>
+                        <a href="/logout" class="auth-button">Logout</a>
+                    `;
+                } else {
+                    currentUser = null;
+                    userMenu.innerHTML = `
+                        <a href="/login" class="auth-button">Login</a>
+                    `;
+                }
+            } catch (error) {
+                // If auth endpoint doesn't exist (Easy Auth mode), hide the menu
+                userMenu.style.display = 'none';
+                console.log('Auth endpoint not available (using Easy Auth)');
+            }
+        }
+
+        // Check auth state on load
+        checkAuthState();
+
+        const qidForm = document.getElementById('qid-form');
         const userInputField = document.getElementById('user-input');
         const chatBody = document.getElementById('chat-body');
         const typingIndicator = document.getElementById('typing-indicator');
@@ -470,6 +536,11 @@
                 });
 
                 if (!response.ok) {
+                    if (response.status === 401) {
+                        // Redirect to login if not authenticated
+                        window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname);
+                        return;
+                    }
                     throw new Error(`HTTP error! status: ${response.status}`);
                 }
 
