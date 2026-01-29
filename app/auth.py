@@ -91,9 +91,9 @@ class AuthManager:
         # In-memory session store (use Redis in production)
         self._sessions: dict[str, UserSession] = {}
         
-        # PKCE store: state -> code_verifier
-        # Stores the code_verifier for each auth flow, keyed by state
-        self._pkce_store: dict[str, str] = {}
+        # Auth code flow store: state -> auth_code_flow dict
+        # Stores the auth_code_flow (including code_verifier) for each auth flow, keyed by state
+        self._pkce_store: dict[str, dict] = {}
         
         # Initialize MSAL confidential client
         # We use PKCE even though we're a confidential client (have client_secret)
@@ -128,35 +128,34 @@ class AuthManager:
         """
         Generate authorization URL for login with PKCE.
         
+        Uses MSAL's initiate_auth_code_flow which handles PKCE internally.
+        
         Returns:
             Tuple of (auth_url, state)
         """
         if not state:
             state = secrets.token_urlsafe(32)
         
-        # Generate PKCE pair
-        code_verifier, code_challenge = self._generate_pkce_pair()
-        
-        # Store code_verifier for later use in token exchange
-        self._pkce_store[state] = code_verifier
-        
-        # Build auth URL with PKCE parameters
-        # MSAL's get_authorization_request_url doesn't directly support PKCE,
-        # so we need to add the parameters manually
-        base_auth_url = self._msal_app.get_authorization_request_url(
+        # Use MSAL's built-in auth code flow with PKCE
+        # This method generates and stores PKCE parameters internally
+        auth_code_flow = self._msal_app.initiate_auth_code_flow(
             scopes=self.config.scopes,
-            state=state,
-            redirect_uri=self.config.redirect_uri
+            redirect_uri=self.config.redirect_uri,
+            state=state
         )
         
-        # Append PKCE parameters
-        pkce_params = urlencode({
-            'code_challenge': code_challenge,
-            'code_challenge_method': 'S256'
-        })
-        auth_url = f"{base_auth_url}&{pkce_params}"
+        # Store the entire auth_code_flow for use in callback
+        # It contains the code_verifier and other necessary data
+        self._pkce_store[state] = auth_code_flow
         
-        logger.debug(f"Generated auth URL with PKCE, state: {state}")
+        auth_url = auth_code_flow.get("auth_uri", "")
+        if not auth_url:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to generate authorization URL"
+            )
+        
+        logger.debug(f"Generated auth URL with PKCE via initiate_auth_code_flow, state: {state}")
         return auth_url, state
     
     async def handle_callback(self, code: str, state: str) -> UserSession:
@@ -173,22 +172,19 @@ class AuthManager:
         Raises:
             HTTPException: If authentication fails
         """
-        # Retrieve and validate code_verifier for PKCE
-        code_verifier = self._pkce_store.pop(state, None)
-        if not code_verifier:
+        # Retrieve the auth_code_flow stored during get_auth_url
+        auth_code_flow = self._pkce_store.pop(state, None)
+        if not auth_code_flow:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid state parameter - possible CSRF attack or expired auth flow"
             )
         
-        # Exchange code for tokens with PKCE code_verifier
-        # Note: MSAL ConfidentialClientApplication.acquire_token_by_authorization_code
-        # does not have a code_verifier parameter, so we use the underlying method
-        result = self._msal_app.acquire_token_by_authorization_code(
-            code=code,
-            scopes=self.config.scopes,
-            redirect_uri=self.config.redirect_uri,
-            code_verifier=code_verifier  # PKCE code_verifier
+        # Exchange code for tokens using MSAL's built-in PKCE handling
+        # acquire_token_by_auth_code_flow uses the code_verifier stored in auth_code_flow
+        result = self._msal_app.acquire_token_by_auth_code_flow(
+            auth_code_flow=auth_code_flow,
+            auth_response={"code": code, "state": state}
         )
         
         if "error" in result:
