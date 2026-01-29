@@ -115,22 +115,6 @@ resource "azuread_application" "mcp" {
       value                      = "Mcp.Tools.ReadWrite"
     }
   }
-
-  optional_claims {
-    access_token {
-      name = "scp"
-    }
-  }
-
-  app_role {
-    allowed_member_types = ["Application"]
-    display_name         = "Azure MCP Tools ReadWrite All"
-    description          = "Application permission for Azure MCP tool calls"
-    value                = "Mcp.Tools.ReadWrite.All"
-    enabled              = true
-
-    id = local.mcp_role_id
-  }
   feature_tags {
     enterprise = true
     gallery    = true
@@ -140,12 +124,7 @@ resource "azuread_application" "mcp" {
     resource_app_id = "00000003-0000-0000-c000-000000000000" # Microsoft Graph
 
     resource_access {
-      id   = "df021288-bdef-4463-88db-98f22de89214" # User.Read.All
-      type = "Role"
-    }
-
-    resource_access {
-      id   = "b4e74841-8e56-480b-be8b-910348b18b4c" # User.ReadWrite
+      id   = "e1fe6dd8-ba31-4d61-89e7-88639da4683d" # User.Read
       type = "Scope"
     }
   }
