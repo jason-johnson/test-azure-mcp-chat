@@ -91,12 +91,13 @@ class AuthManager:
         # In-memory session store (use Redis in production)
         self._sessions: dict[str, UserSession] = {}
         
-        # PKCE state store (code_verifier by state)
-        # Store for CSRF protection (state -> True mapping)
-        self._state_store: dict[str, bool] = {}
+        # PKCE store: state -> code_verifier
+        # Stores the code_verifier for each auth flow, keyed by state
+        self._pkce_store: dict[str, str] = {}
         
         # Initialize MSAL confidential client
-        # Note: We're a confidential client with client_secret, so PKCE is not required
+        # We use PKCE even though we're a confidential client (have client_secret)
+        # because some environments require PKCE for all OAuth flows
         self._msal_app = msal.ConfidentialClientApplication(
             client_id=config.client_id,
             client_credential=config.client_secret,
@@ -106,9 +107,26 @@ class AuthManager:
         
         logger.info(f"AuthManager initialized for tenant {config.tenant_id}")
     
+    def _generate_pkce_pair(self) -> tuple[str, str]:
+        """
+        Generate PKCE code_verifier and code_challenge.
+        
+        Returns:
+            Tuple of (code_verifier, code_challenge)
+        """
+        # Generate a random code_verifier (43-128 characters)
+        code_verifier = secrets.token_urlsafe(64)  # 86 characters
+        
+        # Create code_challenge using S256 method
+        # SHA256 hash of code_verifier, then base64url encode
+        code_challenge_digest = hashlib.sha256(code_verifier.encode('ascii')).digest()
+        code_challenge = base64.urlsafe_b64encode(code_challenge_digest).decode('ascii').rstrip('=')
+        
+        return code_verifier, code_challenge
+    
     def get_auth_url(self, state: Optional[str] = None) -> tuple[str, str]:
         """
-        Generate authorization URL for login.
+        Generate authorization URL for login with PKCE.
         
         Returns:
             Tuple of (auth_url, state)
@@ -116,16 +134,29 @@ class AuthManager:
         if not state:
             state = secrets.token_urlsafe(32)
         
-        # Store state for CSRF protection
-        self._state_store[state] = True
+        # Generate PKCE pair
+        code_verifier, code_challenge = self._generate_pkce_pair()
         
-        auth_url = self._msal_app.get_authorization_request_url(
+        # Store code_verifier for later use in token exchange
+        self._pkce_store[state] = code_verifier
+        
+        # Build auth URL with PKCE parameters
+        # MSAL's get_authorization_request_url doesn't directly support PKCE,
+        # so we need to add the parameters manually
+        base_auth_url = self._msal_app.get_authorization_request_url(
             scopes=self.config.scopes,
             state=state,
             redirect_uri=self.config.redirect_uri
         )
         
-        logger.debug(f"Generated auth URL with state: {state}")
+        # Append PKCE parameters
+        pkce_params = urlencode({
+            'code_challenge': code_challenge,
+            'code_challenge_method': 'S256'
+        })
+        auth_url = f"{base_auth_url}&{pkce_params}"
+        
+        logger.debug(f"Generated auth URL with PKCE, state: {state}")
         return auth_url, state
     
     async def handle_callback(self, code: str, state: str) -> UserSession:
@@ -142,18 +173,22 @@ class AuthManager:
         Raises:
             HTTPException: If authentication fails
         """
-        # Validate state for CSRF protection
-        if not self._state_store.pop(state, None):
+        # Retrieve and validate code_verifier for PKCE
+        code_verifier = self._pkce_store.pop(state, None)
+        if not code_verifier:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid state parameter - possible CSRF attack"
+                detail="Invalid state parameter - possible CSRF attack or expired auth flow"
             )
         
-        # Exchange code for tokens
+        # Exchange code for tokens with PKCE code_verifier
+        # Note: MSAL ConfidentialClientApplication.acquire_token_by_authorization_code
+        # does not have a code_verifier parameter, so we use the underlying method
         result = self._msal_app.acquire_token_by_authorization_code(
             code=code,
             scopes=self.config.scopes,
-            redirect_uri=self.config.redirect_uri
+            redirect_uri=self.config.redirect_uri,
+            code_verifier=code_verifier  # PKCE code_verifier
         )
         
         if "error" in result:
