@@ -109,7 +109,7 @@ resource "azuread_application" "mcp" {
       admin_consent_display_name = "Azure MCP Tools ReadWrite"
       enabled                    = true
       id                         = random_uuid.fe_user_impersonation_id.result
-      type                       = "Admin"
+      type                       = "User"
       user_consent_description   = "Allow the application to access Azure MCP tools on your behalf."
       user_consent_display_name  = "Access Azure MCP tools"
       value                      = "Mcp.Tools.ReadWrite"
