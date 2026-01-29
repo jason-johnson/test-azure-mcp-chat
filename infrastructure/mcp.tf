@@ -142,10 +142,6 @@ resource "azuread_application" "mcp" {
 
   web {
     redirect_uris = ["https://${local.mcp_app_name}.azurewebsites.net/.auth/login/aad/callback"]
-
-    implicit_grant {
-      id_token_issuance_enabled = true
-    }
   }
 
   lifecycle {
