@@ -100,10 +100,6 @@ resource "azuread_application" "fe" {
       "http://localhost:8000/auth/callback",                                    # Local development
       "https://${local.frontend_app_name}.azurewebsites.net/auth/callback",     # Production MSAL auth
     ]
-
-    implicit_grant {
-      id_token_issuance_enabled = true
-    }
   }
 
   lifecycle {
