@@ -67,6 +67,9 @@ resource "azurerm_linux_web_app" "mcp_app" {
     "AzureAd__ClientId"                               = azuread_application.mcp.client_id
     "AzureAd__ClientSecret"                           = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.mcp_secret.id})"
     "AzureAd__Audience"                               = "api://${azuread_application.mcp.client_id}"
+    # Microsoft.Identity.Web v2+ requires ClientCredentials array format for OBO
+    "AzureAd__ClientCredentials__0__SourceType"       = "ClientSecret"
+    "AzureAd__ClientCredentials__0__ClientSecret"     = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.mcp_secret.id})"
     "AZURE_LOG_LEVEL"                                 = "Verbose"
     "AZURE_MCP_DANGEROUSLY_DISABLE_HTTPS_REDIRECTION" = "true"
     "WEBSITES_PORT"                                   = "8080"
