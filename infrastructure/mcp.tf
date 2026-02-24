@@ -44,7 +44,8 @@ resource "azurerm_linux_web_app" "mcp_app" {
       client_id                  = azuread_application.mcp.client_id
       client_secret_setting_name = "MICROSOFT_PROVIDER_AUTHENTICATION_SECRET"
       tenant_auth_endpoint       = "https://login.microsoftonline.com/${data.azuread_client_config.current.tenant_id}/v2.0/"
-      allowed_audiences          = ["api://${azuread_application.mcp.client_id}"]
+      # Accept both audience formats - Azure AD may issue tokens with either
+      allowed_audiences          = ["api://${azuread_application.mcp.client_id}", azuread_application.mcp.client_id]
       allowed_applications       = [azuread_application.fe.client_id, var.azure_cli_client_id]
     }
 
@@ -65,6 +66,7 @@ resource "azurerm_linux_web_app" "mcp_app" {
     "AzureAd__TenantId"                               = data.azuread_client_config.current.tenant_id
     "AzureAd__ClientId"                               = azuread_application.mcp.client_id
     "AzureAd__ClientSecret"                           = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.mcp_secret.id})"
+    "AzureAd__Audience"                               = "api://${azuread_application.mcp.client_id}"
     "AZURE_LOG_LEVEL"                                 = "Verbose"
     "AZURE_MCP_DANGEROUSLY_DISABLE_HTTPS_REDIRECTION" = "true"
     "WEBSITES_PORT"                                   = "8080"
@@ -102,7 +104,8 @@ resource "azuread_application" "mcp" {
   owners       = [data.azuread_client_config.current.object_id]
 
   api {
-    mapped_claims_enabled = true
+    mapped_claims_enabled          = true
+    requested_access_token_version = 2 # Explicit v2 tokens for consistent behavior across tenants
 
     oauth2_permission_scope {
       admin_consent_description  = "Allow the application to access Azure MCP tools on behalf of the signed-in user."
