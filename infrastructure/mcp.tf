@@ -65,7 +65,6 @@ resource "azurerm_linux_web_app" "mcp_app" {
     "AzureAd__Instance"                               = "https://login.microsoftonline.com/"
     "AzureAd__TenantId"                               = data.azuread_client_config.current.tenant_id
     "AzureAd__ClientId"                               = azuread_application.mcp.client_id
-    "AzureAd__ClientSecret"                           = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.mcp_secret.id})"
     "AzureAd__Audience"                               = "api://${azuread_application.mcp.client_id}"
     # Microsoft.Identity.Web v2+ requires ClientCredentials array format for OBO
     "AzureAd__ClientCredentials__0__SourceType"       = "ClientSecret"
