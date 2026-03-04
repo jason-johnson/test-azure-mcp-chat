@@ -26,7 +26,7 @@ resource "azurerm_linux_web_app" "mcp_app" {
 
   site_config {
     application_stack {
-      docker_image_name   = "azure-sdk/azure-mcp:2.0.0-beta.11"
+      docker_image_name   = "azure-sdk/azure-mcp:2.0.0-beta.23"
       docker_registry_url = "https://mcr.microsoft.com"
     }
 
@@ -44,7 +44,8 @@ resource "azurerm_linux_web_app" "mcp_app" {
       client_id                  = azuread_application.mcp.client_id
       client_secret_setting_name = "MICROSOFT_PROVIDER_AUTHENTICATION_SECRET"
       tenant_auth_endpoint       = "https://login.microsoftonline.com/${data.azuread_client_config.current.tenant_id}/v2.0/"
-      allowed_audiences          = ["api://${azuread_application.mcp.client_id}"]
+      # Accept both audience formats - Azure AD may issue tokens with either
+      allowed_audiences          = ["api://${azuread_application.mcp.client_id}", azuread_application.mcp.client_id]
       allowed_applications       = [azuread_application.fe.client_id, var.azure_cli_client_id]
     }
 
@@ -64,7 +65,10 @@ resource "azurerm_linux_web_app" "mcp_app" {
     "AzureAd__Instance"                               = "https://login.microsoftonline.com/"
     "AzureAd__TenantId"                               = data.azuread_client_config.current.tenant_id
     "AzureAd__ClientId"                               = azuread_application.mcp.client_id
-    "AzureAd__ClientSecret"                           = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.mcp_secret.id})"
+    "AzureAd__Audience"                               = "api://${azuread_application.mcp.client_id}"
+    # Microsoft.Identity.Web v2+ requires ClientCredentials array format for OBO
+    "AzureAd__ClientCredentials__0__SourceType"       = "ClientSecret"
+    "AzureAd__ClientCredentials__0__ClientSecret"     = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.mcp_secret.id})"
     "AZURE_LOG_LEVEL"                                 = "Verbose"
     "AZURE_MCP_DANGEROUSLY_DISABLE_HTTPS_REDIRECTION" = "true"
     "WEBSITES_PORT"                                   = "8080"
@@ -102,7 +106,8 @@ resource "azuread_application" "mcp" {
   owners       = [data.azuread_client_config.current.object_id]
 
   api {
-    mapped_claims_enabled = true
+    mapped_claims_enabled          = true
+    requested_access_token_version = 2 # Explicit v2 tokens for consistent behavior across tenants
 
     oauth2_permission_scope {
       admin_consent_description  = "Allow the application to access Azure MCP tools on behalf of the signed-in user."
@@ -115,22 +120,6 @@ resource "azuread_application" "mcp" {
       value                      = "Mcp.Tools.ReadWrite"
     }
   }
-
-  optional_claims {
-    access_token {
-      name = "scp"
-    }
-  }
-
-  app_role {
-    allowed_member_types = ["Application"]
-    display_name         = "Azure MCP Tools ReadWrite All"
-    description          = "Application permission for Azure MCP tool calls"
-    value                = "Mcp.Tools.ReadWrite.All"
-    enabled              = true
-
-    id = local.mcp_role_id
-  }
   feature_tags {
     enterprise = true
     gallery    = true
@@ -140,12 +129,7 @@ resource "azuread_application" "mcp" {
     resource_app_id = "00000003-0000-0000-c000-000000000000" # Microsoft Graph
 
     resource_access {
-      id   = "df021288-bdef-4463-88db-98f22de89214" # User.Read.All
-      type = "Role"
-    }
-
-    resource_access {
-      id   = "b4e74841-8e56-480b-be8b-910348b18b4c" # User.ReadWrite
+      id   = "e1fe6dd8-ba31-4d61-89e7-88639da4683d" # User.Read
       type = "Scope"
     }
   }
@@ -163,10 +147,6 @@ resource "azuread_application" "mcp" {
 
   web {
     redirect_uris = ["https://${local.mcp_app_name}.azurewebsites.net/.auth/login/aad/callback"]
-
-    implicit_grant {
-      id_token_issuance_enabled = true
-    }
   }
 
   lifecycle {
