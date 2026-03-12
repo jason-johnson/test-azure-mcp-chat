@@ -8,6 +8,10 @@ terraform {
       source  = "hashicorp/azurerm"
       version = "~> 4.54.0"
     }
+    azapi = {
+      source  = "Azure/azapi"
+      version = "~> 2.4.0"
+    }
     namep = {
       source  = "jason-johnson/namep"
       version = "~> 2.2.0"
