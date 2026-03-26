@@ -157,25 +157,17 @@ resource "azurerm_cognitive_deployment" "gpt4o" {
     capacity = 100 # 100K TPM - needed for MCP tools
   }
 }
-# =============================================================================
-# Function App Service Plan (Consumption)
-# =============================================================================
-resource "azurerm_service_plan" "functions" {
-  name                = provider::namep::namestring("azurerm_service_plan", local.namep_config, { name = "func" })
-  resource_group_name = azurerm_resource_group.main.name
-  location            = azurerm_resource_group.main.location
-  os_type             = "Linux"
-  sku_name            = "Y1" # Consumption plan (or "EP1" for Premium)
-}
 
 # =============================================================================
 # Function App (Agent Framework host)
 # =============================================================================
+# Note: Using existing service plan (azurerm_service_plan.main) since the RG
+# already has an App Service Plan. Can't mix Consumption with existing plans.
 resource "azurerm_linux_function_app" "agent" {
   name                          = provider::namep::namestring("azurerm_linux_web_app", local.namep_config, { name = "agent" })
   resource_group_name           = azurerm_resource_group.main.name
   location                      = azurerm_resource_group.main.location
-  service_plan_id               = azurerm_service_plan.functions.id
+  service_plan_id               = azurerm_service_plan.main.id # Use existing plan
   storage_account_name          = azurerm_storage_account.functions.name
   storage_uses_managed_identity = true # Use managed identity instead of access keys
 
