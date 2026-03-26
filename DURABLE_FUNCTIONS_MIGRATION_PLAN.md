@@ -1,5 +1,18 @@
 # Azure Durable Functions Migration Plan
 
+## Status: Infrastructure Complete, Testing Next
+
+| Phase | Status |
+|-------|--------|
+| Phase 1: Foundation | ✅ Complete |
+| Phase 2: Agent Config | 🔄 In Progress |
+| Phase 3: Auth & Integration | ⏳ Pending |
+| Phase 4: Migration | ⏳ Pending |
+
+**Last Updated:** March 26, 2026
+
+---
+
 ## Executive Summary
 
 This document outlines the plan to migrate the current FastAPI-based Azure MCP Chat application to **Azure Durable Functions** using the **Microsoft Agent Framework** (the new `agent-framework` Python package, not Semantic Kernel). The migration will provide enhanced scalability, built-in state persistence, and native Azure Durable Functions integration.
@@ -446,57 +459,58 @@ With **Microsoft Agent Framework**, we eliminate all custom Durable Functions co
 
 ## Implementation Plan
 
-### Phase 1: Foundation (3-4 days)
+### Phase 1: Foundation ✅ COMPLETE
 
-1. **Set up Azure AI Foundry infrastructure**
-   - Create AI Hub via Terraform
-   - Configure AI Services account
-   - Verify connectivity
+1. **Set up Azure AI Foundry infrastructure** ✅
+   - ✅ Created AI Hub via `azapi_resource` (not `azurerm_ai_hub` - doesn't exist)
+   - ✅ Configured AI Services account (kind = "AIServices")
+   - ✅ Created AI Project linked to Hub
+   - ✅ Storage with managed identity (Azure Policy requires no key auth)
 
-2. **Set up Azure Functions project**
-   - Create `functions/` directory
-   - Install `agent-framework-azurefunctions` pre-release
-   - Configure `host.json` and `local.settings.json`
+2. **Set up Azure Functions project** ✅
+   - ✅ Created `functions/` directory
+   - ✅ Installed `agent-framework --pre` and `agent-framework-azurefunctions --pre`
+   - ✅ Configured `host.json` and `requirements.txt`
 
-3. **Create basic AgentFunctionApp**
-   - Implement `function_app.py` with `AgentFunctionApp`
-   - Test local development with `func start`
+3. **Create basic AgentFunctionApp** ✅
+   - ✅ Implemented `function_app.py` with `AgentFunctionApp`
+   - ⏳ Pending: Test local development with `func start`
 
-### Phase 2: Agent Configuration (2-3 days)
+4. **Update ADO Pipeline** ✅
+   - ✅ Added `DeployFunctionsApp` job to `ado-pipelines/main.yml`
+   - ⏳ Pending: Push to trigger deployment
 
-4. **Configure SRE Agent**
-   - Define agent instructions
-   - Integrate MCP tools (via Foundry or wrapper)
-   - Test tool calling locally
+### Phase 2: Agent Configuration (2-3 days) 🔄 IN PROGRESS
 
-5. **Test conversation persistence**
-   - Verify thread IDs persist across requests
-   - Test conversation resumption via `thread_id`
+5. **Configure SRE Agent**
+   - ✅ Basic agent structure created
+   - ⏳ Define detailed agent instructions
+   - ⏳ Integrate MCP tools (via Foundry or wrapper)
+   - ⏳ Test tool calling locally
+
+6. **Test conversation persistence**
+   - ⏳ Verify thread IDs persist across requests
+   - ⏳ Test conversation resumption via `thread_id`
 
 ### Phase 3: Auth & Integration (2-3 days)
 
-6. **Implement OBO auth for MCP**
-   - Create auth helper for MCP bearer token passthrough
-   - Test MCP operations with user token
+7. **Implement OBO auth for MCP**
+   - ⏳ Create auth helper for MCP bearer token passthrough
+   - ⏳ Test MCP operations with user token
 
-7. **Implement custom auth endpoints (if needed)**
-   - `/api/login` - OAuth redirect
-   - `/api/auth/callback` - Token exchange
+8. **Implement custom auth endpoints (if needed)**
+   - ⏳ `/api/login` - OAuth redirect
+   - ⏳ `/api/auth/callback` - Token exchange
 
-8. **Update frontend**
-   - Store `thread_id` from response header
-   - Handle both sync and 202 async responses
+9. **Update frontend**
+   - ⏳ Store `thread_id` from response header
+   - ⏳ Handle both sync and 202 async responses
 
-### Phase 4: Deployment (2-3 days)
+### Phase 4: Migration & Cutover (1-2 days)
 
-9. **Update Terraform**
-    - Create Function App resource
-    - Create AI Foundry project
-    - Configure managed identities
-
-10. **Update ADO Pipeline**
-    - Add Function App deployment stage
-    - Configure slot deployments
+10. **Migrate traffic**
+    - ⏳ Update DNS/routing to point to Function App
+    - ⏳ Deprecate old FastAPI app
 
 11. **Testing & Cutover**
     - E2E tests with real MCP server
@@ -510,26 +524,25 @@ With **Microsoft Agent Framework**, we eliminate all custom Durable Functions co
 
 ### Python Requirements (`functions/requirements.txt`)
 
+> **✅ DEPLOYED** - These packages are in the actual `functions/requirements.txt`
+
 ```txt
-# Microsoft Agent Framework (pre-release)
+# Microsoft Agent Framework (pre-release required as of March 2026)
 agent-framework --pre
 agent-framework-azurefunctions --pre
 
-# Azure Identity & AI
+# Azure Identity
 azure-identity>=1.15.0
-azure-ai-projects>=1.0.0  # For Foundry Tools integration
 
-# Authentication (if custom auth endpoints needed)
-msal>=1.28.0
-pyjwt>=2.10.1
+# Type validation (Pydantic 2.x)
+pydantic>=2.0.0
 
-# HTTP Client (for MCP wrapper if needed)
-httpx[http2]>=0.28.1
-
-# Utilities
-python-dotenv>=1.1.0
-pydantic>=2.10.6
+# Planned additions (not yet added):
+# azure-ai-projects>=1.0.0  # For Foundry MCP Tools if using managed discovery
+# msal>=1.28.0              # If custom auth endpoints needed
 ```
+
+**Important:** `agent-framework` still requires `--pre` flag - it's not yet a stable release.
 
 ### Environment Variables
 
@@ -632,111 +645,141 @@ tools_client = client.use_foundry_tools()
 
 ## Infrastructure Changes
 
-### Terraform Resources Needed
+> **✅ DEPLOYED** - Infrastructure is complete as of March 26, 2026
 
-#### 1. Azure AI Foundry Project (`infrastructure/ai_foundry.tf`)
+### Key Deployment Learnings
 
-**Required for Microsoft Agent Framework** - provides AI project endpoint:
+⚠️ **Important Gotchas We Encountered:**
+
+1. **Storage Account - Azure Policy**: Our subscription blocks key-based authentication
+   - Must set `shared_access_key_enabled = false`
+   - Provider requires `storage_use_azuread = true`
+   - Function App uses `storage_uses_managed_identity = true`
+
+2. **Consumption Plan Limitation**: Cannot create Linux Consumption (Y1) plan in a resource group that already has App Service Plans
+   - **Solution**: Reuse the existing `azurerm_service_plan.main` (B1)
+
+3. **AI Hub/Project**: `azurerm_ai_hub` doesn't exist in azurerm provider
+   - **Solution**: Use `azapi_resource` with `Microsoft.MachineLearningServices/workspaces@2024-10-01`
+   - Hub has `kind = "Hub"`, Project has `kind = "Project"`
+
+4. **AI Hub Role Assignments**: AI Hub automatically creates its own role assignments
+   - Don't create role assignments for AI Hub identity manually (causes 409 conflicts)
+
+### Terraform Resources Created (`infrastructure/ai_foundry.tf`)
+
+#### 1. Storage Account (Managed Identity Auth)
 
 ```hcl
-# Azure AI Services (Cognitive Services) for AI Foundry
-resource "azurerm_cognitive_account" "ai_services" {
-  name                = local.ai_services_name
-  resource_group_name = azurerm_resource_group.main.name
-  location            = azurerm_resource_group.main.location
-  kind                = "AIServices"
-  sku_name            = "S0"
-
-  identity {
-    type = "SystemAssigned"
-  }
-}
-
-# Azure AI Hub (Foundry Project)
-resource "azurerm_ai_hub" "main" {
-  name                = local.ai_hub_name
-  resource_group_name = azurerm_resource_group.main.name
-  location            = azurerm_resource_group.main.location
-  
-  identity {
-    type = "SystemAssigned"
-  }
-
-  storage_account_id       = azurerm_storage_account.functions.id
-  key_vault_id             = azurerm_key_vault.main.id
-  application_insights_id  = azurerm_application_insights.main.id
-}
-
-# Output the endpoint for Agent Framework
-output "ai_foundry_endpoint" {
-  value = azurerm_ai_hub.main.endpoint
+resource "azurerm_storage_account" "functions" {
+  name                            = "..."
+  account_tier                    = "Standard"
+  account_replication_type        = "LRS"
+  allow_nested_items_to_be_public = false
+  shared_access_key_enabled       = false  # Required by Azure Policy
 }
 ```
 
-#### 2. Function App (`infrastructure/functions.tf`)
+#### 2. AI Services Account
 
 ```hcl
-# Function App Service Plan (Consumption or Premium)
-resource "azurerm_service_plan" "functions" {
-  name                = local.function_plan_name
-  resource_group_name = azurerm_resource_group.main.name
-  location            = azurerm_resource_group.main.location
-  os_type             = "Linux"
-  sku_name            = "Y1"  # Consumption plan (or "EP1" for Premium)
+resource "azurerm_cognitive_account" "ai_services" {
+  name                  = local.ai_services_name
+  kind                  = "AIServices"  # Multi-service, includes OpenAI
+  sku_name              = "S0"
+  custom_subdomain_name = local.ai_services_name
 }
+```
 
-# Storage Account for Durable Functions
-resource "azurerm_storage_account" "functions" {
-  name                     = local.function_storage_name
-  resource_group_name      = azurerm_resource_group.main.name
-  location                 = azurerm_resource_group.main.location
-  account_tier             = "Standard"
-  account_replication_type = "LRS"
-}
+#### 3. AI Hub & Project (via azapi)
 
-# Function App
-resource "azurerm_linux_function_app" "chat" {
-  name                       = local.function_app_name
-  resource_group_name        = azurerm_resource_group.main.name
-  location                   = azurerm_resource_group.main.location
-  service_plan_id            = azurerm_service_plan.functions.id
-  storage_account_name       = azurerm_storage_account.functions.name
-  storage_account_access_key = azurerm_storage_account.functions.primary_access_key
-
-  site_config {
-    application_stack {
-      python_version = "3.11"
+```hcl
+# AI Hub
+resource "azapi_resource" "ai_hub" {
+  type      = "Microsoft.MachineLearningServices/workspaces@2024-10-01"
+  name      = local.ai_hub_name
+  body = {
+    kind = "Hub"
+    properties = {
+      storageAccount      = azurerm_storage_account.functions.id
+      keyVault            = azurerm_key_vault.main.id
+      applicationInsights = azurerm_application_insights.main.id
     }
-    application_insights_connection_string = azurerm_application_insights.main.connection_string
   }
+}
+
+# AI Project (child of Hub)
+resource "azapi_resource" "ai_project" {
+  type = "Microsoft.MachineLearningServices/workspaces@2024-10-01"
+  body = {
+    kind = "Project"
+    properties = {
+      hubResourceId = azapi_resource.ai_hub.id
+    }
+  }
+}
+```
+
+#### 4. Function App (Managed Identity Storage)
+
+```hcl
+resource "azurerm_linux_function_app" "agent" {
+  service_plan_id               = azurerm_service_plan.main.id  # Reuse existing!
+  storage_account_name          = azurerm_storage_account.functions.name
+  storage_uses_managed_identity = true  # No access keys
 
   app_settings = {
-    "FUNCTIONS_WORKER_RUNTIME"       = "python"
-    "AzureWebJobsFeatureFlags"       = "EnableWorkerIndexing"
-    
-    # Azure AI Foundry (for Agent Framework)
-    "AZURE_AI_PROJECT_ENDPOINT"      = azurerm_ai_hub.main.endpoint
-    "AZURE_OPENAI_DEPLOYMENT_NAME"   = azurerm_cognitive_deployment.gpt4o.name
-    
-    # MCP Server
-    "MCP_URL"                        = "https://${azurerm_linux_web_app.mcp.default_hostname}"
-    
-    # Auth
-    "TENANT_ID"                      = data.azurerm_client_config.current.tenant_id
-    "MSAL_CLIENT_ID"                 = azuread_application.fe.client_id
-    "MCP_API_CLIENT_ID"              = azuread_application.mcp.client_id
-  }
-
-  identity {
-    type = "SystemAssigned"
+    "AzureWebJobsStorage__accountName" = azurerm_storage_account.functions.name
+    "AZURE_AI_PROJECT_ENDPOINT"        = "https://..."
+    "AZURE_OPENAI_DEPLOYMENT_NAME"     = "gpt-4o"
   }
 }
+```
 
-# Grant Function App access to AI Services
+#### 5. Required Role Assignments
+
+```hcl
+# Function App needs multiple storage roles for Durable Functions
+resource "azurerm_role_assignment" "function_storage_blob" {
+  role_definition_name = "Storage Blob Data Contributor"
+}
+resource "azurerm_role_assignment" "function_storage_queue" {
+  role_definition_name = "Storage Queue Data Contributor"
+}
+resource "azurerm_role_assignment" "function_storage_table" {
+  role_definition_name = "Storage Table Data Contributor"
+}
+resource "azurerm_role_assignment" "function_storage_account" {
+  role_definition_name = "Storage Account Contributor"
+}
+
+# Function App needs AI roles
 resource "azurerm_role_assignment" "function_ai_user" {
-  scope                = azurerm_cognitive_account.ai_services.id
-  role_definition_name = "Cognitive Services User"
-  principal_id         = azurerm_linux_function_app.chat.identity[0].principal_id
+  role_definition_name = "Cognitive Services OpenAI User"
+}
+resource "azurerm_role_assignment" "function_hub_developer" {
+  role_definition_name = "Azure AI Developer"
+}
+
+# NOTE: AI Hub creates its own role assignments automatically - don't duplicate!
+```
+
+### Provider Configuration
+
+```hcl
+# Required for storage without access keys
+provider "azurerm" {
+  storage_use_azuread = true
+}
+
+# Required for AI Hub/Project
+terraform {
+  required_providers {
+    azapi = {
+      source  = "Azure/azapi"
+      version = "~> 2.4.0"
+    }
+  }
 }
 ```
 
@@ -831,20 +874,21 @@ curl -X POST "http://localhost:7071/api/agents/SREAgent/run?thread_id=<thread_id
 
 ## Migration Checklist
 
-### Infrastructure
-- [ ] Create Azure AI Foundry project (AI Hub) via Terraform
-- [ ] Create Function App with storage account
-- [ ] Configure managed identity RBAC
+### Infrastructure ✅ COMPLETE
+- [x] Create Azure AI Foundry project (AI Hub) via Terraform
+- [x] Create Function App with storage account
+- [x] Configure managed identity RBAC
 - [ ] (Optional) Configure MCP as Foundry Tool connection
 
-### Function App
-- [ ] Create `functions/` directory
-- [ ] Install `agent-framework --pre` and `agent-framework-azurefunctions --pre`
-- [ ] Create `function_app.py` with `AgentFunctionApp`
-- [ ] Configure `host.json` and `local.settings.json`
+### Function App ✅ COMPLETE
+- [x] Create `functions/` directory
+- [x] Install `agent-framework --pre` and `agent-framework-azurefunctions --pre`
+- [x] Create `function_app.py` with `AgentFunctionApp`
+- [x] Configure `host.json`
+- [ ] Configure `local.settings.json` (for local dev)
 
-### Agent & Tools
-- [ ] Define SRE Agent with instructions
+### Agent & Tools 🔄 IN PROGRESS
+- [x] Define SRE Agent with basic instructions
 - [ ] Integrate MCP tools (Foundry or wrapper)
 - [ ] Test agent locally with `func start`
 - [ ] Test conversation persistence (thread_id)
@@ -858,9 +902,9 @@ curl -X POST "http://localhost:7071/api/agents/SREAgent/run?thread_id=<thread_id
 - [ ] Integration tests with AgentTestClient
 - [ ] E2E tests with real MCP server
 
-### Deployment
-- [ ] Update ADO pipeline
-- [ ] Deploy to staging
+### Deployment 🔄 IN PROGRESS
+- [x] Update ADO pipeline
+- [ ] Deploy to staging (push to trigger)
 - [ ] Test with real MCP server
 - [ ] Cutover from App Service
 
@@ -948,7 +992,9 @@ Response (202 Accepted):
 
 ---
 
-*Document Version: 3.0*  
+*Document Version: 4.0*  
 *Created: March 12, 2026*  
-*Last Updated: March 12, 2026*  
-*Major Change: Migrated to Microsoft Agent Framework (agent-framework --pre)*
+*Last Updated: March 26, 2026*  
+*Major Changes:*
+- *v3.0: Migrated to Microsoft Agent Framework (agent-framework --pre)*
+- *v4.0: Infrastructure deployed, updated with deployment learnings*

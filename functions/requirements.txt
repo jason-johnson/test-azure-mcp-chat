@@ -1,0 +1,9 @@
+# Microsoft Agent Framework (pre-release)
+agent-framework --pre
+agent-framework-azurefunctions --pre
+
+# Azure Identity for managed identity authentication
+azure-identity>=1.15.0
+
+# Utilities
+pydantic>=2.0.0
