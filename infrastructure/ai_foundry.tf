@@ -20,6 +20,7 @@ resource "azurerm_storage_account" "functions" {
   account_tier                    = "Standard"
   account_replication_type        = "LRS"
   allow_nested_items_to_be_public = false
+  shared_access_key_enabled       = false # Disabled per Azure Policy - use managed identity instead
 
   tags = {
     purpose = "ai-foundry-and-functions"
@@ -171,12 +172,12 @@ resource "azurerm_service_plan" "functions" {
 # Function App (Agent Framework host)
 # =============================================================================
 resource "azurerm_linux_function_app" "agent" {
-  name                       = provider::namep::namestring("azurerm_linux_web_app", local.namep_config, { name = "agent" })
-  resource_group_name        = azurerm_resource_group.main.name
-  location                   = azurerm_resource_group.main.location
-  service_plan_id            = azurerm_service_plan.functions.id
-  storage_account_name       = azurerm_storage_account.functions.name
-  storage_account_access_key = azurerm_storage_account.functions.primary_access_key
+  name                          = provider::namep::namestring("azurerm_linux_web_app", local.namep_config, { name = "agent" })
+  resource_group_name           = azurerm_resource_group.main.name
+  location                      = azurerm_resource_group.main.location
+  service_plan_id               = azurerm_service_plan.functions.id
+  storage_account_name          = azurerm_storage_account.functions.name
+  storage_uses_managed_identity = true # Use managed identity instead of access keys
 
   site_config {
     application_stack {
@@ -189,6 +190,9 @@ resource "azurerm_linux_function_app" "agent" {
     # Azure Functions settings
     "FUNCTIONS_WORKER_RUNTIME" = "python"
     "AzureWebJobsFeatureFlags" = "EnableWorkerIndexing"
+
+    # Storage connection via managed identity (no access keys)
+    "AzureWebJobsStorage__accountName" = azurerm_storage_account.functions.name
 
     # Azure AI Foundry (for Agent Framework)
     # Construct endpoint from AI Services subdomain and project name
@@ -239,9 +243,30 @@ resource "azurerm_role_assignment" "function_project_developer" {
 }
 
 # Function App → Storage (for Durable Functions state)
-resource "azurerm_role_assignment" "function_storage" {
+resource "azurerm_role_assignment" "function_storage_blob" {
   scope                = azurerm_storage_account.functions.id
   role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = azurerm_linux_function_app.agent.identity[0].principal_id
+}
+
+# Function App → Storage Queue (required for Durable Functions)
+resource "azurerm_role_assignment" "function_storage_queue" {
+  scope                = azurerm_storage_account.functions.id
+  role_definition_name = "Storage Queue Data Contributor"
+  principal_id         = azurerm_linux_function_app.agent.identity[0].principal_id
+}
+
+# Function App → Storage Table (required for Durable Functions)
+resource "azurerm_role_assignment" "function_storage_table" {
+  scope                = azurerm_storage_account.functions.id
+  role_definition_name = "Storage Table Data Contributor"
+  principal_id         = azurerm_linux_function_app.agent.identity[0].principal_id
+}
+
+# Function App → Storage Account Contributor (required for function runtime)
+resource "azurerm_role_assignment" "function_storage_account" {
+  scope                = azurerm_storage_account.functions.id
+  role_definition_name = "Storage Account Contributor"
   principal_id         = azurerm_linux_function_app.agent.identity[0].principal_id
 }
 
