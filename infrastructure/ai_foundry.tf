@@ -270,26 +270,9 @@ resource "azurerm_role_assignment" "function_storage_account" {
   principal_id         = azurerm_linux_function_app.agent.identity[0].principal_id
 }
 
-# AI Hub → Storage (required for hub operations)
-resource "azurerm_role_assignment" "ai_hub_storage" {
-  scope                = azurerm_storage_account.functions.id
-  role_definition_name = "Storage Blob Data Contributor"
-  principal_id         = azapi_resource.ai_hub.identity[0].principal_id
-}
-
-# AI Hub → Key Vault (required for hub secrets)
-resource "azurerm_role_assignment" "ai_hub_keyvault" {
-  scope                = azurerm_key_vault.main.id
-  role_definition_name = "Key Vault Secrets User"
-  principal_id         = azapi_resource.ai_hub.identity[0].principal_id
-}
-
-# AI Hub → AI Services (required for model access)
-resource "azurerm_role_assignment" "ai_hub_cognitive" {
-  scope                = azurerm_cognitive_account.ai_services.id
-  role_definition_name = "Cognitive Services OpenAI User"
-  principal_id         = azapi_resource.ai_hub.identity[0].principal_id
-}
+# NOTE: AI Hub automatically creates role assignments for its managed identity
+# on storage, key vault, and AI services during provisioning.
+# We don't need to create them explicitly - they would cause 409 conflicts.
 
 # =============================================================================
 # Outputs
