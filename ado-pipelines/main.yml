@@ -93,6 +93,17 @@ jobs:
       function_app_name: $[ dependencies.Terraform.outputs['Terraform.function_app_name'] ]
       resource_group_name: $[ dependencies.Terraform.outputs['Terraform.resource_group_name'] ]
     steps:
+      # Debug: List files to be archived
+      - task: Bash@3
+        displayName: "List Functions Directory"
+        inputs:
+          targetType: 'inline'
+          script: |
+            echo "=== Contents of functions directory ==="
+            ls -la $(Build.SourcesDirectory)/functions/
+            echo "=== Verifying function_app.py exists ==="
+            cat $(Build.SourcesDirectory)/functions/function_app.py | head -20
+      
       # Setup Python environment
       - task: UsePythonVersion@0
         displayName: "Set Python Version"
@@ -120,6 +131,17 @@ jobs:
           archiveType: zip
           archiveFile: $(Build.ArtifactStagingDirectory)/functions-$(Build.BuildId).zip
           replaceExistingArchive: true
+
+      # Debug: Verify zip contents
+      - task: Bash@3
+        displayName: "Verify Zip Contents"
+        inputs:
+          targetType: 'inline'
+          script: |
+            echo "=== Zip file contents (excluding python_packages) ==="
+            unzip -l $(Build.ArtifactStagingDirectory)/functions-$(Build.BuildId).zip | grep -v python_packages | head -30
+            echo "=== Verifying function_app.py is in zip ==="
+            unzip -l $(Build.ArtifactStagingDirectory)/functions-$(Build.BuildId).zip | grep function_app.py
 
       - task: AzureFunctionApp@2
         displayName: 'Deploy Azure Function App : $(function_app_name)'
