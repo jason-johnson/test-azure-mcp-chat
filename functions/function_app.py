@@ -1,16 +1,13 @@
 # =============================================================================
 # Azure Functions App with Microsoft Agent Framework
 # =============================================================================
-# This creates an SRE agent that can interact with Azure resources via MCP tools
 
 import os
 import logging
-from typing import Annotated
+import sys
 
-from pydantic import Field
+import azure.functions as func
 from azure.identity import DefaultAzureCredential
-from agent_framework import tool
-from agent_framework.azure import AgentFunctionApp, AzureOpenAIResponsesClient
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -40,66 +37,83 @@ Guidelines:
 Always prioritize safety - confirm destructive operations before executing.
 """
 
-
 # =============================================================================
-# Custom Tools (can be extended with MCP tool wrappers)
+# Create the Function App
 # =============================================================================
-@tool(description="Get current agent status and configuration")
-def get_agent_status() -> str:
-    """Returns the agent's current status and configuration."""
-    return f"""
+def create_app():
+    """Create either AgentFunctionApp or simple FunctionApp."""
+    # Try to create AgentFunctionApp first
+    try:
+        from agent_framework import tool
+        from agent_framework.azure import AgentFunctionApp, AzureOpenAIResponsesClient
+        
+        project_endpoint = os.environ.get("AZURE_AI_PROJECT_ENDPOINT")
+        deployment_name = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o")
+        
+        if not project_endpoint:
+            logger.warning("AZURE_AI_PROJECT_ENDPOINT not set - falling back to simple app")
+            raise ValueError("No project endpoint")
+        
+        logger.info(f"Initializing Agent Framework with endpoint: {project_endpoint}")
+        
+        @tool(description="Get current agent status and configuration")
+        def get_agent_status() -> str:
+            """Returns the agent's current status and configuration."""
+            return f"""
 Agent Status: Online
 Project Endpoint: {os.environ.get('AZURE_AI_PROJECT_ENDPOINT', 'Not configured')}
 Model Deployment: {os.environ.get('AZURE_OPENAI_DEPLOYMENT_NAME', 'Not configured')}
 MCP Server: {os.environ.get('MCP_URL', 'Not configured')}
 """
+        
+        client = AzureOpenAIResponsesClient(
+            project_endpoint=project_endpoint,
+            deployment_name=deployment_name,
+            credential=DefaultAzureCredential(),
+        )
+        
+        sre_agent = client.as_agent(
+            name="SREAgent",
+            instructions=SRE_INSTRUCTIONS,
+            tools=[get_agent_status],
+        )
+        
+        logger.info("SRE Agent created successfully")
+        
+        agent_app = AgentFunctionApp(
+            agents=[sre_agent],
+            enable_health_check=True,
+        )
+        
+        logger.info("AgentFunctionApp initialized")
+        return agent_app
+        
+    except Exception as e:
+        logger.warning(f"AgentFunctionApp not available ({e}), using simple FunctionApp")
+        
+        # Create simple FunctionApp as fallback
+        simple_app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
+        
+        @simple_app.route(route="health", methods=["GET"])
+        def health_check(req: func.HttpRequest) -> func.HttpResponse:
+            """Simple health check."""
+            return func.HttpResponse(
+                '{"status": "healthy", "message": "Python worker is running (simple mode)"}',
+                mimetype="application/json",
+                status_code=200
+            )
+        
+        @simple_app.route(route="test", methods=["GET"])
+        def test_endpoint(req: func.HttpRequest) -> func.HttpResponse:
+            """Test endpoint."""
+            endpoint = os.environ.get("AZURE_AI_PROJECT_ENDPOINT", "NOT SET")
+            return func.HttpResponse(
+                f'{{"status": "ok", "python_version": "{sys.version}", "endpoint": "{endpoint[:50] if endpoint else "NOT SET"}...", "mode": "simple"}}',
+                mimetype="application/json",
+                status_code=200
+            )
+        
+        return simple_app
 
-
-# =============================================================================
-# Create Agent Function App
-# =============================================================================
-def create_app() -> AgentFunctionApp:
-    """Create and configure the AgentFunctionApp with SRE Agent."""
-    
-    # Get configuration from environment
-    project_endpoint = os.environ.get("AZURE_AI_PROJECT_ENDPOINT")
-    deployment_name = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o")
-    
-    if not project_endpoint:
-        raise ValueError("AZURE_AI_PROJECT_ENDPOINT environment variable is required")
-    
-    logger.info(f"Initializing Agent Framework with endpoint: {project_endpoint}")
-    
-    # Create Azure OpenAI client with managed identity
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=project_endpoint,
-        deployment_name=deployment_name,
-        credential=DefaultAzureCredential(),
-    )
-    
-    # Create the SRE Agent
-    # TODO: Add MCP tools integration when Foundry MCP connection is configured
-    sre_agent = client.as_agent(
-        name="SREAgent",
-        instructions=SRE_INSTRUCTIONS,
-        tools=[get_agent_status],  # Add more tools here
-    )
-    
-    logger.info("SRE Agent created successfully")
-    
-    # Create the Function App
-    # This automatically generates:
-    # - POST /api/agents/SREAgent/run - Main agent endpoint
-    # - GET /api/health - Health check (if enabled)
-    app = AgentFunctionApp(
-        agents=[sre_agent],
-        enable_health_check=True,
-    )
-    
-    logger.info("AgentFunctionApp initialized")
-    
-    return app
-
-
-# Initialize the app
+# Single app instance - this is what Azure Functions expects
 app = create_app()
