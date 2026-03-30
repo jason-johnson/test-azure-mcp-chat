@@ -108,7 +108,8 @@ jobs:
           script: |
             cd $(Build.SourcesDirectory)/functions
             python -m pip install --upgrade pip
-            pip install --target=".python_packages/lib/site-packages" -r requirements.txt
+            # --pre flag needed for agent-framework pre-release packages
+            pip install --pre --target=".python_packages/lib/site-packages" -r requirements.txt
           workingDirectory: '$(Build.SourcesDirectory)'
       
       - task: ArchiveFiles@2

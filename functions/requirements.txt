@@ -1,6 +1,7 @@
 # Microsoft Agent Framework (pre-release)
-agent-framework --pre
-agent-framework-azurefunctions --pre
+# NOTE: --pre flag is added in ADO pipeline pip install command
+agent-framework
+agent-framework-azurefunctions
 
 # Azure Identity for managed identity authentication
 azure-identity>=1.15.0
