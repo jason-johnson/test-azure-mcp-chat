@@ -1,9 +1,8 @@
 # Azure Functions core
 azure-functions
-azure-functions-durable
 
-# Microsoft Agent Framework (handles agents, persistence, and HTTP endpoints)
-agent-framework[azure-functions]
+# Microsoft Agent Framework with Azure Functions + MCP support
+agent-framework[azure-functions,mcp]
 
 # Azure authentication
 azure-identity

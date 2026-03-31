@@ -216,22 +216,19 @@ resource "azurerm_linux_function_app" "agent" {
     # Storage connection via managed identity (no access keys)
     "AzureWebJobsStorage__accountName" = azurerm_storage_account.functions.name
 
-    # Azure AI Foundry (for Agent Framework)
+    # Azure AI Foundry (for Agent Service)
     # Construct endpoint from AI Services subdomain and project name
     "AZURE_AI_PROJECT_ENDPOINT"    = "https://${azurerm_cognitive_account.ai_services.custom_subdomain_name}.services.ai.azure.com/api/projects/${local.ai_project_name}"
     "AZURE_OPENAI_DEPLOYMENT_NAME" = azurerm_cognitive_deployment.gpt4o.name
 
-    # MCP Tool Connection (must be configured manually in Azure AI Foundry portal)
-    # After manual configuration, uncomment this line:
-    # "MCP_TOOL_CONNECTION_ID" = "AzureMCP"
+    # MCP Connection (configured in Foundry portal with OAuth identity passthrough)
+    # The connection name must match what's configured in Foundry Connected Resources
+    "MCP_TOOL_CONNECTION_ID" = "AzureMCP"
+    "MCP_URL"                = "https://${azurerm_linux_web_app.mcp_app.default_hostname}"
 
-    # Direct MCP connection info (for reference when configuring in Foundry)
-    "MCP_URL"           = "https://${azurerm_linux_web_app.mcp_app.default_hostname}"
+    # Auth info (for Foundry MCP OAuth configuration)
+    "TENANT_ID"         = data.azuread_client_config.current.tenant_id
     "MCP_API_CLIENT_ID" = azuread_application.mcp.client_id
-
-    # Auth (for OBO flow if implementing custom auth endpoints)
-    "TENANT_ID"      = data.azuread_client_config.current.tenant_id
-    "MSAL_CLIENT_ID" = azuread_application.fe.client_id
   }
 
   identity {

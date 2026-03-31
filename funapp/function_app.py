@@ -1,24 +1,29 @@
 """
-Azure Durable Functions Chat Agent using Microsoft Agent Framework.
+Azure Functions Durable Agent using Microsoft Agent Framework.
 
-This is a minimal implementation that leverages the Agent Framework to:
-- Automatically handle HTTP endpoints via AgentFunctionApp
-- Persist conversation threads using Durable Functions
-- Integrate with MCP tools via Azure AI Foundry
+This implementation uses AgentFunctionApp from agent-framework for durable agents
+with hosted MCP tools configured in Azure AI Foundry portal.
 
-Usage:
+Features:
+- Durable agents with automatic state persistence
+- Auto-generated HTTP endpoints: /api/agents/{agentName}/run
+- Hosted MCP tools via Foundry connection (OAuth identity passthrough)
+- Thread continuity via thread_id parameter
+
+Endpoints:
   POST /api/agents/SREAgent/run
-  Body: "Your question here"
-  
-  # Continue conversation with thread_id:
-  POST /api/agents/SREAgent/run?thread_id=<thread_id>
-  Body: "Follow-up question"
+  - Body: Plain text message OR JSON {"input": "message", "thread_id": "optional"}
+  - Response headers: x-ms-thread-id
+
+  GET /api/health
+  - Health check with agent and tool status
 """
 
 import os
 import logging
 from azure.identity import DefaultAzureCredential
-from agent_framework.azure import AzureOpenAIChatClient, AgentFunctionApp
+from agent_framework import Agent
+from agent_framework.azure import AzureOpenAIResponsesClient, AgentFunctionApp
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -44,75 +49,68 @@ You are an expert Azure Site Reliability Engineer (SRE) assistant.
 - If an operation requires elevated permissions, explain what's needed
 """
 
+# MCP Server configuration - must match the connection name configured in Foundry portal
+MCP_TOOL_CONNECTION_ID = os.environ.get("MCP_TOOL_CONNECTION_ID", "AzureMCP")
 
-def create_app() -> AgentFunctionApp:
+# =============================================================================
+# Create Agent with Foundry-hosted MCP Tools
+# =============================================================================
+
+def create_sre_agent() -> Agent:
     """
-    Create the AgentFunctionApp with SRE Agent.
+    Create the SRE agent with Foundry-hosted MCP tools.
     
-    The AgentFunctionApp automatically:
-    - Creates HTTP endpoints at /api/agents/{name}/run
-    - Persists conversation threads via Durable Functions
-    - Handles failure recovery and state management
+    The MCP tools are configured in Azure AI Foundry portal with OAuth identity
+    passthrough. The agent-framework automatically handles:
+    - Tool discovery from MCP server
+    - OAuth consent flow when user first invokes MCP tools
+    - Credential caching after user consents
     """
-    
-    # Get configuration from environment
-    endpoint = os.environ.get("AZURE_AI_PROJECT_ENDPOINT")
-    deployment_name = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o")
-    mcp_connection_id = os.environ.get("MCP_TOOL_CONNECTION_ID")
-    
-    if not endpoint:
-        raise ValueError(
-            "AZURE_AI_PROJECT_ENDPOINT is not set. "
-            "Expected format: https://<resource>.services.ai.azure.com/api/projects/<project>"
-        )
-    
-    logger.info(f"Initializing agent with endpoint: {endpoint}")
-    logger.info(f"Using model deployment: {deployment_name}")
-    
-    # Create Azure OpenAI client with Managed Identity
-    client = AzureOpenAIChatClient(
-        endpoint=endpoint,
-        deployment_name=deployment_name,
+    # Initialize Azure OpenAI Responses client
+    # This client connects to Azure AI Foundry project for hosted MCP tools
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ.get("AZURE_AI_PROJECT_ENDPOINT"),
+        deployment_name=os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o"),
         credential=DefaultAzureCredential(),
     )
     
-    # Check if MCP tools are configured via Foundry
-    # If MCP_TOOL_CONNECTION_ID is set, use Foundry Tools which handles auth automatically
-    if mcp_connection_id:
-        logger.info(f"Using Foundry Tools with MCP connection: {mcp_connection_id}")
-        # use_foundry_tools() loads MCP tools from the Foundry project's connected resources
-        # Auth is handled by Foundry - no manual token management needed
-        tools_client = client.use_foundry_tools()
-        sre_agent = tools_client.as_agent(
-            name="SREAgent",
-            instructions=SRE_AGENT_INSTRUCTIONS,
-        )
-    else:
-        logger.info("No MCP_TOOL_CONNECTION_ID set - running without MCP tools")
-        logger.info("To enable MCP, configure an MCP connection in Azure AI Foundry portal")
-        sre_agent = client.as_agent(
-            name="SREAgent",
-            instructions=SRE_AGENT_INSTRUCTIONS,
-        )
+    # Get MCP tools from Foundry connection
+    # The connection is configured in Foundry portal with OAuth identity passthrough
+    tools = []
+    if MCP_TOOL_CONNECTION_ID:
+        try:
+            mcp_tool = client.get_mcp_tool(
+                connection_id=MCP_TOOL_CONNECTION_ID,
+                require_approval="never",  # Tools auto-execute without confirmation
+            )
+            tools.append(mcp_tool)
+            logger.info(f"Loaded MCP tools from connection: {MCP_TOOL_CONNECTION_ID}")
+        except Exception as e:
+            logger.warning(f"Failed to load MCP tools: {e}")
     
-    # Create the Function App - this handles everything automatically:
-    # - POST /api/agents/SREAgent/run endpoint
-    # - GET /api/health endpoint  
-    # - Durable conversation persistence via thread_id
-    # - Async mode via x-ms-wait-for-response header
-    app = AgentFunctionApp(
-        agents=[sre_agent],
-        enable_health_check=True,
+    # Create agent with the client and MCP tools
+    agent = client.as_agent(
+        name="SREAgent",
+        instructions=SRE_AGENT_INSTRUCTIONS,
+        tools=tools if tools else None,
     )
     
-    logger.info("AgentFunctionApp initialized successfully")
-    logger.info("Endpoints available:")
-    logger.info("  POST /api/agents/SREAgent/run - Chat with the SRE agent")
-    logger.info("  GET /api/health - Health check")
-    
-    return app
+    return agent
 
 
-# Initialize the app
-# This is the only line needed to expose the agent as an Azure Function
-app = create_app()
+# =============================================================================
+# Create AgentFunctionApp (Durable Agent Host)
+# =============================================================================
+
+# Create the SRE agent
+sre_agent = create_sre_agent()
+
+# Create AgentFunctionApp - this automatically:
+# - Registers agents with Durable Task worker
+# - Generates HTTP endpoints: /api/agents/{agentName}/run
+# - Handles thread persistence via thread_id
+# - Provides health check endpoint
+app = AgentFunctionApp(
+    agents=[sre_agent],
+    enable_health_check=True,
+)

@@ -6,7 +6,7 @@
 |-------|--------|
 | Phase 1: Foundation | ✅ Complete |
 | Phase 2: Agent Config | ✅ Complete |
-| Phase 3: Auth & Integration | ✅ Complete (Foundry-managed) |
+| Phase 3: Auth & Integration | ✅ Complete (OAuth Identity Passthrough) |
 | Phase 4: Migration | ⏳ Testing |
 
 **Last Updated:** March 31, 2026
@@ -15,7 +15,9 @@
 
 ## Executive Summary
 
-This document outlines the plan to migrate the current FastAPI-based Azure MCP Chat application to **Azure Durable Functions** using the **Microsoft Agent Framework** (the new `agent-framework` Python package, not Semantic Kernel). The migration will provide enhanced scalability, built-in state persistence, and native Azure Durable Functions integration.
+This document outlines the plan to migrate the current FastAPI-based Azure MCP Chat application to **Azure Functions** using **Microsoft Agent Framework** (`agent-framework` package) with:
+- **AgentFunctionApp** for durable agents
+- **Foundry-hosted MCP tools** with **OAuth Identity Passthrough**
 
 ---
 
@@ -23,33 +25,67 @@ This document outlines the plan to migrate the current FastAPI-based Azure MCP C
 
 ### What Was Implemented
 
-The agent implementation in `funapp/function_app.py` is now **~90 lines** compared to the original **~400+ lines** in `app/agent.py`. Key simplifications:
+The agent implementation uses **Microsoft Agent Framework** with durable agents and Foundry-hosted MCP tools.
 
 | Responsibility | Old Approach | New Approach |
 |----------------|--------------|--------------|
 | HTTP Endpoints | Manual FastAPI routes | `AgentFunctionApp` auto-generates |
-| Conversation State | Manual `ChatHistory` caching | Automatic via `thread_id` |
-| MCP Authentication | Manual OBO token flow | Azure AI Foundry handles it |
-| Error Recovery | None | Built-in Durable Functions replay |
-| Token Refresh | Manual TTL-based caching | Foundry manages credentials |
+| State Persistence | Manual session caching | Durable Task with replay |
+| Conversation State | Manual `ChatHistory` | Thread continuity via `thread_id` |
+| MCP Tools | `MCPStreamableHttpPlugin` | `get_mcp_tool()` from Foundry |
+| MCP Authentication | Manual OBO token flow | Foundry OAuth passthrough |
+| Error Recovery | None | Built-in durable replay |
+
+### Key Benefits
+
+1. **Agent Framework handles boilerplate:**
+   - Auto-generated `/api/agents/{name}/run` endpoints
+   - Thread management
+   - Health check endpoint
+
+2. **OAuth Identity Passthrough** (from [Microsoft docs](https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/mcp-authentication)):
+   - Preserve each user's identity and permissions
+   - Foundry securely stores user credentials
+   - User signs in once, then MCP tools use their identity
 
 ### Files Changed
 
 | File | Purpose |
 |------|---------|
-| `funapp/function_app.py` | Minimal agent using AgentFunctionApp |
-| `funapp/requirements.txt` | Added `agent-framework[azure-functions]` |
-| `funapp/README.md` | Usage documentation |
-| `infrastructure/ai_foundry.tf` | Added MCP connection + MCP_TOOL_CONNECTION_ID |
+| `funapp/function_app.py` | Agent using `AgentFunctionApp` + `AzureOpenAIResponsesClient` |
+| `funapp/requirements.txt` | Uses `agent-framework[azure-functions,mcp]` |
+| `funapp/README.md` | Durable agent documentation |
+| `infrastructure/ai_foundry.tf` | `MCP_TOOL_CONNECTION_ID` env var |
 
-### How MCP Tools Work Now
+### How It Works
 
-MCP is configured as an **Azure AI Foundry Tool Connection** instead of manual code:
+```python
+# 1. Create client with Foundry project
+client = AzureOpenAIResponsesClient(
+    project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+    deployment_name=os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+    credential=DefaultAzureCredential(),
+)
 
-1. Terraform creates `azapi_resource.mcp_connection` in the AI Hub
-2. Function app gets `MCP_TOOL_CONNECTION_ID=AzureMCP` env var
-3. Code uses `client.use_foundry_tools()` to load MCP tools
-4. **Foundry handles all authentication** - no OBO code needed
+# 2. Get MCP tools from Foundry connection (configured with OAuth passthrough)
+mcp_tool = client.get_mcp_tool(connection_id="AzureMCP")
+
+# 3. Create agent with tools
+agent = client.as_agent(name="SREAgent", tools=[mcp_tool])
+
+# 4. Host with AgentFunctionApp (auto-generates endpoints)
+app = AgentFunctionApp(agents=[agent], enable_health_check=True)
+```
+
+### Setup Steps
+
+1. Deploy infrastructure via ADO pipeline
+2. **Configure MCP connection in Foundry portal**:
+   - Go to ai.azure.com → Project → Connected resources
+   - Add MCP connection with **OAuth Identity Passthrough**
+   - Name it `AzureMCP` (matches `MCP_TOOL_CONNECTION_ID`)
+3. Deploy function app
+4. Test with user consent flow
 
 ### Quick Start
 
@@ -58,10 +94,12 @@ MCP is configured as an **Azure AI Foundry Tool Connection** instead of manual c
 git add . && git commit -m "Agent implementation"
 git push origin main
 
-# Test the agent
+# Test the agent (AgentFunctionApp auto-generated endpoint)
 curl -X POST https://<func-app>.azurewebsites.net/api/agents/SREAgent/run \
   -H "Content-Type: text/plain" \
   -d "List my Azure subscriptions"
+
+# Response includes x-ms-thread-id header for conversation continuity
 ```
 
 ---
