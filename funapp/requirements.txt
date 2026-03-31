@@ -1,6 +1,9 @@
-# Uncomment to enable Azure Monitor OpenTelemetry
-# Ref: aka.ms/functions-azure-monitor-python 
-# azure-monitor-opentelemetry 
-
+# Azure Functions core
 azure-functions
 azure-functions-durable
+
+# Microsoft Agent Framework (handles agents, persistence, and HTTP endpoints)
+agent-framework[azure-functions]
+
+# Azure authentication
+azure-identity
