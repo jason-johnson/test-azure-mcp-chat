@@ -21,6 +21,7 @@ resource "azurerm_storage_account" "functions" {
   account_replication_type        = "LRS"
   allow_nested_items_to_be_public = false
   shared_access_key_enabled       = false # Disabled per Azure Policy - use managed identity instead
+  public_network_access_enabled   = true  # Required for AI Foundry portal access
 
   tags = {
     purpose = "ai-foundry-and-functions"
@@ -31,12 +32,13 @@ resource "azurerm_storage_account" "functions" {
 # AI Services Account (replaces standalone OpenAI)
 # =============================================================================
 resource "azurerm_cognitive_account" "ai_services" {
-  name                  = local.ai_services_name
-  location              = azurerm_resource_group.main.location
-  resource_group_name   = azurerm_resource_group.main.name
-  kind                  = "AIServices"
-  sku_name              = "S0"
-  custom_subdomain_name = local.ai_services_name
+  name                          = local.ai_services_name
+  location                      = azurerm_resource_group.main.location
+  resource_group_name           = azurerm_resource_group.main.name
+  kind                          = "AIServices"
+  sku_name                      = "S0"
+  custom_subdomain_name         = local.ai_services_name
+  public_network_access_enabled = true # Required for AI Foundry portal access
 
   identity {
     type = "SystemAssigned"

@@ -1,12 +1,13 @@
 resource "azurerm_key_vault" "main" {
-  name                       = provider::namep::namestring("azurerm_key_vault", local.namep_config)
-  location                   = var.location
-  resource_group_name        = azurerm_resource_group.main.name
-  sku_name                   = "standard"
-  tenant_id                  = data.azurerm_client_config.current.tenant_id
-  soft_delete_retention_days = 7
-  purge_protection_enabled   = false
-  rbac_authorization_enabled = true
+  name                          = provider::namep::namestring("azurerm_key_vault", local.namep_config)
+  location                      = var.location
+  resource_group_name           = azurerm_resource_group.main.name
+  sku_name                      = "standard"
+  tenant_id                     = data.azurerm_client_config.current.tenant_id
+  soft_delete_retention_days    = 7
+  purge_protection_enabled      = false
+  rbac_authorization_enabled    = true
+  public_network_access_enabled = true # Required for AI Foundry portal access
 }
 
 resource "azurerm_role_assignment" "managed_admin" {
