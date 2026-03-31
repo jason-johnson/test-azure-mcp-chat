@@ -142,27 +142,20 @@ resource "azapi_resource" "ai_services_connection" {
 # =============================================================================
 # MCP Tool Connection (Azure MCP Server)
 # =============================================================================
-# This configures the MCP server as a Foundry Tool connection
-# Authentication is handled automatically by Foundry using AAD (managed identity)
-resource "azapi_resource" "mcp_connection" {
-  type      = "Microsoft.MachineLearningServices/workspaces/connections@2024-10-01"
-  name      = "AzureMCP"
-  parent_id = azapi_resource.ai_hub.id
-
-  body = {
-    properties = {
-      category      = "ModelContextProtocol"
-      target        = "https://${azurerm_linux_web_app.mcp_app.default_hostname}"
-      authType      = "AAD"
-      isSharedToAll = true
-      metadata = {
-        ApiType = "MCP"
-      }
-    }
-  }
-
-  depends_on = [azapi_resource.ai_hub, azurerm_linux_web_app.mcp_app]
-}
+# NOTE: MCP connections must be configured manually in Azure AI Foundry portal
+# The API does not yet support creating ModelContextProtocol connections via ARM/Terraform
+# 
+# To configure manually:
+# 1. Go to https://ai.azure.com
+# 2. Select the AI Project
+# 3. Navigate to Connected resources
+# 4. Add "Model Context Protocol tool"
+# 5. Configure:
+#    - Name: AzureMCP
+#    - Endpoint: https://<mcp-app>.azurewebsites.net
+#    - Authentication: Azure AD (Unauthenticated for initial testing)
+#
+# After manual configuration, set MCP_TOOL_CONNECTION_ID=AzureMCP in the function app
 
 # =============================================================================
 # Model Deployment (GPT-4o for Agent Framework)
@@ -216,14 +209,13 @@ resource "azurerm_linux_function_app" "agent" {
     "AZURE_AI_PROJECT_ENDPOINT"    = "https://${azurerm_cognitive_account.ai_services.custom_subdomain_name}.services.ai.azure.com/api/projects/${local.ai_project_name}"
     "AZURE_OPENAI_DEPLOYMENT_NAME" = azurerm_cognitive_deployment.gpt4o.name
 
-    # MCP Tool Connection (configured in Azure AI Foundry)
-    # This tells the Agent Framework to load MCP tools from Foundry
-    # Auth is handled automatically by Foundry - no manual token management
-    "MCP_TOOL_CONNECTION_ID" = azapi_resource.mcp_connection.name
+    # MCP Tool Connection (must be configured manually in Azure AI Foundry portal)
+    # After manual configuration, uncomment this line:
+    # "MCP_TOOL_CONNECTION_ID" = "AzureMCP"
 
-    # Legacy MCP direct connection (kept for reference, not used with Foundry Tools)
-    # "MCP_URL"           = "https://${azurerm_linux_web_app.mcp_app.default_hostname}"
-    # "MCP_API_CLIENT_ID" = azuread_application.mcp.client_id
+    # Direct MCP connection info (for reference when configuring in Foundry)
+    "MCP_URL"           = "https://${azurerm_linux_web_app.mcp_app.default_hostname}"
+    "MCP_API_CLIENT_ID" = azuread_application.mcp.client_id
 
     # Auth (for OBO flow if implementing custom auth endpoints)
     "TENANT_ID"      = data.azuread_client_config.current.tenant_id
