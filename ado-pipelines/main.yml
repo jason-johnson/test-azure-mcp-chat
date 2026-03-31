@@ -99,10 +99,10 @@ jobs:
         inputs:
           targetType: 'inline'
           script: |
-            echo "=== Contents of functions directory ==="
-            ls -la $(Build.SourcesDirectory)/functions/
+            echo "=== Contents of funapp directory ==="
+            ls -la $(Build.SourcesDirectory)/funapp/
             echo "=== Verifying function_app.py exists ==="
-            cat $(Build.SourcesDirectory)/functions/function_app.py | head -20
+            cat $(Build.SourcesDirectory)/funapp/function_app.py | head -20
       
       # Setup Python environment
       - task: UsePythonVersion@0
@@ -117,7 +117,7 @@ jobs:
         inputs:
           targetType: 'inline'
           script: |
-            cd $(Build.SourcesDirectory)/functions
+            cd $(Build.SourcesDirectory)/funapp
             python -m pip install --upgrade pip
             # --pre flag needed for agent-framework pre-release packages
             pip install --pre --target=".python_packages/lib/site-packages" -r requirements.txt
@@ -126,10 +126,10 @@ jobs:
       - task: ArchiveFiles@2
         displayName: 'Archive Functions Application'
         inputs:
-          rootFolderOrFile: '$(Build.SourcesDirectory)/functions'
+          rootFolderOrFile: '$(Build.SourcesDirectory)/funapp'
           includeRootFolder: false
           archiveType: zip
-          archiveFile: $(Build.ArtifactStagingDirectory)/functions-$(Build.BuildId).zip
+          archiveFile: $(Build.ArtifactStagingDirectory)/funapp-$(Build.BuildId).zip
           replaceExistingArchive: true
 
       # Debug: Verify zip contents
@@ -139,9 +139,9 @@ jobs:
           targetType: 'inline'
           script: |
             echo "=== Zip file contents (excluding python_packages) ==="
-            unzip -l $(Build.ArtifactStagingDirectory)/functions-$(Build.BuildId).zip | grep -v python_packages | head -30
+            unzip -l $(Build.ArtifactStagingDirectory)/funapp-$(Build.BuildId).zip | grep -v python_packages | head -30
             echo "=== Verifying function_app.py is in zip ==="
-            unzip -l $(Build.ArtifactStagingDirectory)/functions-$(Build.BuildId).zip | grep function_app.py
+            unzip -l $(Build.ArtifactStagingDirectory)/funapp-$(Build.BuildId).zip | grep function_app.py
 
       - task: AzureFunctionApp@2
         displayName: 'Deploy Azure Function App : $(function_app_name)'
@@ -149,5 +149,5 @@ jobs:
           azureSubscription: $(servicePrinciple)
           appType: functionAppLinux
           appName: $(function_app_name)
-          package: $(Build.ArtifactStagingDirectory)/functions-$(Build.BuildId).zip
+          package: $(Build.ArtifactStagingDirectory)/funapp-$(Build.BuildId).zip
           runtimeStack: 'PYTHON|3.11'

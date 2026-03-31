@@ -48,3 +48,14 @@ output "key_vault_name" {
   description = "Name of the Key Vault"
   value       = azurerm_key_vault.main.name
 }
+
+# Agent Function App outputs (from ai_foundry.tf)
+output "function_app_name" {
+  description = "Name of the Agent Function App"
+  value       = azurerm_linux_function_app.agent.name
+}
+
+output "function_app_url" {
+  description = "URL of the Agent Function App"
+  value       = "https://${azurerm_linux_function_app.agent.default_hostname}"
+}

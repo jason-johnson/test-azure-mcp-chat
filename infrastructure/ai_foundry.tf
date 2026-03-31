@@ -321,12 +321,4 @@ output "ai_project_name" {
   value       = azapi_resource.ai_project.name
 }
 
-output "function_app_name" {
-  description = "Name of the Agent Function App"
-  value       = azurerm_linux_function_app.agent.name
-}
-
-output "function_app_url" {
-  description = "URL of the Agent Function App"
-  value       = "https://${azurerm_linux_function_app.agent.default_hostname}"
-}
+# Note: function_app_name and function_app_url outputs are in outputs.tf
