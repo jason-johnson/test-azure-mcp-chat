@@ -143,7 +143,7 @@ resource "azapi_resource" "ai_services_connection" {
 # MCP Tool Connection (Azure MCP Server)
 # =============================================================================
 # This configures the MCP server as a Foundry Tool connection
-# Authentication is handled automatically by Foundry using the configured credentials
+# Authentication is handled automatically by Foundry using AAD (managed identity)
 resource "azapi_resource" "mcp_connection" {
   type      = "Microsoft.MachineLearningServices/workspaces/connections@2024-10-01"
   name      = "AzureMCP"
@@ -157,13 +157,6 @@ resource "azapi_resource" "mcp_connection" {
       isSharedToAll = true
       metadata = {
         ApiType = "MCP"
-      }
-      # Configure AAD auth for the MCP server
-      credentials = {
-        type     = "AAD"
-        tenantId = data.azuread_client_config.current.tenant_id
-        clientId = azuread_application.mcp.client_id
-        # Note: Client secret managed via Foundry connection secrets
       }
     }
   }
