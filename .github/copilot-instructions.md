@@ -24,6 +24,29 @@ This repository is a Semantic Kernel agent application that connects to remote a
 
 ---
 
+## 🔐 Security: Passwordless Authentication Only
+
+**ALWAYS use passwordless/secretless authentication. Never use passwords or connection strings unless there is absolutely no alternative.**
+
+### Preferred Authentication Methods (in order):
+1. **Managed Identity** - For Azure-to-Azure communication (App Service → Storage, Function App → OpenAI, etc.)
+2. **Workload Identity Federation** - For CI/CD pipelines and external services
+3. **DefaultAzureCredential** - In code, automatically uses MI in Azure, CLI locally
+4. **User-delegated tokens** - For user-context operations (OBO flow)
+
+### Examples in This Repo:
+- Storage Account: `storage_uses_managed_identity = true`, `shared_access_key_enabled = false`
+- Function App → Storage: Role assignments (Storage Blob/Queue/Table Data Contributor)
+- Function App → AI Services: Role assignment (Cognitive Services OpenAI User)
+- AI Foundry connections: `authType = "AAD"` (managed identity)
+
+### When Secrets Are Unavoidable:
+- Store in **Azure Key Vault** with Key Vault reference: `@Microsoft.KeyVault(SecretUri=...)`
+- Grant access via managed identity, not access policies with secrets
+- Example: `MICROSOFT_PROVIDER_AUTHENTICATION_SECRET` for MSAL client secret (required for OBO flow)
+
+---
+
 ## Authentication Architecture
 
 This app uses **MSAL (Microsoft Authentication Library)** for direct OAuth 2.0 authentication with Microsoft Entra ID.
