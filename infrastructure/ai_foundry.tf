@@ -20,8 +20,13 @@ resource "azurerm_storage_account" "functions" {
   account_tier                    = "Standard"
   account_replication_type        = "LRS"
   allow_nested_items_to_be_public = false
-  shared_access_key_enabled       = false # Disabled per Azure Policy - use managed identity instead
+  shared_access_key_enabled       = true  # Required for AI Foundry Hub initial setup
   public_network_access_enabled   = true  # Required for AI Foundry portal access
+
+  # Explicitly allow all public network access (required for AI Foundry)
+  network_rules {
+    default_action = "Allow"
+  }
 
   tags = {
     purpose = "ai-foundry-and-functions"
@@ -39,6 +44,11 @@ resource "azurerm_cognitive_account" "ai_services" {
   sku_name                      = "S0"
   custom_subdomain_name         = local.ai_services_name
   public_network_access_enabled = true # Required for AI Foundry portal access
+
+  # Explicitly allow all public network access (required for AI Foundry)
+  network_acls {
+    default_action = "Allow"
+  }
 
   identity {
     type = "SystemAssigned"

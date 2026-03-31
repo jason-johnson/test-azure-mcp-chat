@@ -8,6 +8,12 @@ resource "azurerm_key_vault" "main" {
   purge_protection_enabled      = false
   rbac_authorization_enabled    = true
   public_network_access_enabled = true # Required for AI Foundry portal access
+
+  # Explicitly allow all public network access (required for AI Foundry)
+  network_acls {
+    default_action = "Allow"
+    bypass         = "AzureServices"
+  }
 }
 
 resource "azurerm_role_assignment" "managed_admin" {
