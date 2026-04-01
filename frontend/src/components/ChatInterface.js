@@ -284,55 +284,60 @@ const ChatInterface = () => {
     };
   }, [statusPolling, instanceId]);
 
-  // Effect to check for trip confirmation status
+  // Effect to check for trip confirmation status after approval
   useEffect(() => {
     let confirmationIntervalId;
     
     if (instanceId && approvalStatus === "processing") {
       confirmationIntervalId = setInterval(async () => {
         try {
-          // Check confirmation status from the API
-          const confirmationResponse = await axios.get(`${API_URL}/travel-planner/confirmation/${instanceId}`);
-          const confirmationData = confirmationResponse.data;
+          // Reuse the status endpoint to check for completion
+          const statusResponse = await axios.get(`${API_URL}/travel-planner/status/${instanceId}`);
+          const status = statusResponse.data;
           
-          console.log("Confirmation status received:", confirmationData);
+          console.log("Confirmation check - status received:", status);
           
-          if (confirmationData.isConfirmed) {
-            // Trip is confirmed, update status and UI
-            setConfirmationStatus("confirmed");
-            setApprovalStatus("approved");
-            setPlanReadyForApproval(false);
+          // Check if orchestration is completed
+          if (status.runtimeStatus === "Completed" || status.RuntimeStatus === "Completed") {
+            const output = status.output || status.Output || {};
             
-            // Stop polling for confirmation status
-            clearInterval(confirmationIntervalId);
+            // Check for booking result (trip was approved and booked)
+            const bookingResult = output.BookingResult || output.bookingResult;
+            const bookingConfirmation = output.BookingConfirmation || output.bookingConfirmation || "";
             
-            // Update the UI with confirmation message
-            if (confirmationData.confirmationMessage) {
-              const updatedPlanData = planData ? { ...planData, bookingConfirmation: confirmationData.confirmationMessage } : null;
+            if (bookingResult && (bookingResult.status === "confirmed" || bookingResult.booking_id)) {
+              // Trip is confirmed
+              setConfirmationStatus("confirmed");
+              setApprovalStatus("approved");
+              setPlanReadyForApproval(false);
+              clearInterval(confirmationIntervalId);
+              
+              // Update the UI with confirmation message
+              const updatedPlanData = planData ? { ...planData, bookingConfirmation: bookingConfirmation, BookingResult: bookingResult } : null;
               if (updatedPlanData) {
                 displayBookingConfirmation(updatedPlanData);
               }
-            }
-          } else if (confirmationData.isRejected) {
-            // Trip was rejected
-            setConfirmationStatus("rejected");
-            setApprovalStatus("rejected");
-            setPlanReadyForApproval(false);
-            
-            // Stop polling
-            clearInterval(confirmationIntervalId);
-            
-            // Update UI with rejection message
-            if (confirmationData.confirmationMessage) {
-              const updatedPlanData = planData ? { ...planData, bookingConfirmation: confirmationData.confirmationMessage } : null;
+            } else if (bookingConfirmation.toLowerCase().includes("not approved") || bookingConfirmation.toLowerCase().includes("timed out")) {
+              // Trip was rejected
+              setConfirmationStatus("rejected");
+              setApprovalStatus("rejected");
+              setPlanReadyForApproval(false);
+              clearInterval(confirmationIntervalId);
+              
+              // Update UI with rejection message
+              const updatedPlanData = planData ? { ...planData, bookingConfirmation: bookingConfirmation } : null;
               if (updatedPlanData) {
                 displayRejectionMessage(updatedPlanData);
               }
+            } else {
+              // Completed but unclear - stop polling
+              clearInterval(confirmationIntervalId);
+              setLoading(false);
             }
-          } else if (confirmationData.RuntimeStatus === "Completed" || confirmationData.runtimeStatus === "Completed") {
-            // If the orchestration is completed but we're not sure about the status, stop polling
+          } else if (status.runtimeStatus === "Failed" || status.RuntimeStatus === "Failed") {
             clearInterval(confirmationIntervalId);
             setLoading(false);
+            setApprovalStatus("failed");
           }
         } catch (error) {
           console.error('Error checking confirmation status:', error);
