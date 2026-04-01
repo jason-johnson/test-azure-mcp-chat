@@ -1,8 +1,0 @@
-# Azure Functions core
-azure-functions
-
-# Microsoft Agent Framework with Azure Functions + MCP support
-agent-framework[azure-functions,mcp]
-
-# Azure authentication
-azure-identity
