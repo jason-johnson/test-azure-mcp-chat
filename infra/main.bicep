@@ -88,7 +88,7 @@ param aiServiceAccountResourceId string = ''
 // ============= MCP Server Parameters =============
 
 @description('Azure MCP Docker image tag from mcr.microsoft.com/azure-sdk/azure-mcp')
-param mcpImageTag string = '2.0.0-beta.23'
+param mcpImageTag string = 'latest'
 
 @description('Name of the MCP app service')
 param mcpServiceName string = ''
@@ -104,7 +104,7 @@ var deploymentStorageContainerName = 'app-package-${take(functionAppName, 32)}-$
 var webAppName = !empty(webServiceName) ? webServiceName : '${abbrs.webStaticSites}web-${resourceToken}'
 // Pre-compute the expected web URI for CORS settings
 var webUri = 'https://${webAppName}.azurestaticapps.net'
-var mcpAppName = !empty(mcpServiceName) ? mcpServiceName : '${abbrs.webSitesAppService}mcp-${resourceToken}'
+var mcpAppName = !empty(mcpServiceName) ? mcpServiceName : '${abbrs.appContainerApps}mcp-${resourceToken}'
 
 // Organize resources in a resource group
 resource rg 'Microsoft.Resources/resourceGroups@2025-04-01' = {
@@ -501,16 +501,37 @@ module dts './app/dts.bicep' = {
 
 // ============= MCP Server Resources =============
 
-// MCP App Registration in Entra ID (created via Microsoft Graph Bicep extension)
-resource mcpAppRegistration 'Microsoft.Graph/applications@v1.0' = {
-  uniqueName: '${environmentName}-mcp-server'
-  displayName: '${environmentName}-mcp-server'
+// FIC token exchange audience varies by cloud
+var tokenExchangeAudience = environment().name == 'AzureUSGovernment'
+  ? 'api://AzureADTokenExchangeUSGov'
+  : environment().name == 'AzureChinaCloud'
+    ? 'api://AzureADTokenExchangeChina'
+    : 'api://AzureADTokenExchange'
+
+var mcpScopeId = guid(subscription().id, environmentName, 'Mcp.Tools.ReadWrite')
+var mcpServerUniqueName = '${environmentName}-mcp-server'
+var mcpClientUniqueName = '${environmentName}-mcp-client'
+
+// User Assigned Managed Identity for OBO federated identity credential
+module mcpManagedIdentity 'br/public:avm/res/managed-identity/user-assigned-identity:0.4.0' = {
+  scope: rg
+  params: {
+    name: '${abbrs.managedIdentityUserAssignedIdentities}mcp-${resourceToken}'
+    location: location
+    tags: tags
+  }
+}
+
+// Server App Registration — the OAuth 2.0 resource exposed to clients
+resource mcpServerApp 'Microsoft.Graph/applications@v1.0' = {
+  uniqueName: mcpServerUniqueName
+  displayName: '${environmentName} MCP Server'
   signInAudience: 'AzureADMyOrg'
   api: {
     requestedAccessTokenVersion: 2
     oauth2PermissionScopes: [
       {
-        id: guid(subscription().id, environmentName, 'Mcp.Tools.ReadWrite')
+        id: mcpScopeId
         adminConsentDescription: 'Allow the application to access Azure MCP tools on behalf of the signed-in user.'
         adminConsentDisplayName: 'Azure MCP Tools ReadWrite'
         isEnabled: true
@@ -520,73 +541,112 @@ resource mcpAppRegistration 'Microsoft.Graph/applications@v1.0' = {
         value: 'Mcp.Tools.ReadWrite'
       }
     ]
+    preAuthorizedApplications: [
+      {
+        appId: mcpClientApp.appId
+        delegatedPermissionIds: [
+          mcpScopeId
+        ]
+      }
+    ]
   }
-  identifierUris: [
-    'api://${environmentName}-mcp-server'
-  ]
   requiredResourceAccess: [
     {
-      // Microsoft Graph - User.Read
-      resourceAppId: '00000003-0000-0000-c000-000000000000'
+      // Azure Resource Manager API — user_impersonation for OBO
+      resourceAppId: '797f4846-ba00-4fd7-ba43-dac1f8f63013'
       resourceAccess: [
         {
-          id: 'e1fe6dd8-ba31-4d61-89e7-88639da4683d'
+          id: '41094075-9dad-400e-a0bd-54e686782033'
           type: 'Scope'
         }
       ]
     }
   ]
-  web: {
+}
+
+// Update server app to add identifierUris (requires appId to be known first)
+resource mcpServerAppUpdate 'Microsoft.Graph/applications@v1.0' = {
+  uniqueName: mcpServerUniqueName
+  displayName: '${environmentName} MCP Server'
+  identifierUris: ['api://${mcpServerApp.appId}']
+  api: {
+    oauth2PermissionScopes: mcpServerApp.api.oauth2PermissionScopes
+    preAuthorizedApplications: mcpServerApp.api.preAuthorizedApplications
+    requestedAccessTokenVersion: 2
+  }
+}
+
+// Service principal for the server app
+resource mcpServerSp 'Microsoft.Graph/servicePrincipals@v1.0' = {
+  appId: mcpServerApp.appId
+}
+
+// Federated identity credential — passwordless OBO using managed identity
+resource mcpFederatedCredential 'Microsoft.Graph/applications/federatedIdentityCredentials@v1.0' = {
+  name: '${mcpServerApp.uniqueName}/McpServerOboCredential'
+  audiences: [
+    tokenExchangeAudience
+  ]
+  description: 'Federated credential for Azure MCP Server OBO flow'
+  issuer: '${environment().authentication.loginEndpoint}${tenant().tenantId}/v2.0'
+  subject: mcpManagedIdentity.outputs.principalId
+}
+
+// Client App Registration — used by Foundry/Copilot Studio to authenticate
+resource mcpClientApp 'Microsoft.Graph/applications@v1.0' = {
+  uniqueName: mcpClientUniqueName
+  displayName: '${environmentName} MCP Client'
+  signInAudience: 'AzureADMyOrg'
+  publicClient: {
     redirectUris: [
-      'https://${mcpAppName}.azurewebsites.net/.auth/login/aad/callback'
+      'http://localhost'
     ]
   }
+  isFallbackPublicClient: true
 }
 
-// Service principal for the MCP App Registration
-resource mcpServicePrincipal 'Microsoft.Graph/servicePrincipals@v1.0' = {
-  appId: mcpAppRegistration.appId
+// Service principal for the client app
+resource mcpClientSp 'Microsoft.Graph/servicePrincipals@v1.0' = {
+  appId: mcpClientApp.appId
 }
 
-// MCP App Service Plan (Standard tier for Docker container support - Flex Consumption does not support containers)
-module mcpAppServicePlan 'br/public:avm/res/web/serverfarm:0.5.0' = {
+// MCP Container Apps Environment (consumption, no VM quota needed)
+module mcpEnvironment 'br/public:avm/res/app/managed-environment:0.8.0' = {
   scope: rg
   params: {
-    name: '${abbrs.webServerFarms}mcp-${resourceToken}'
+    name: '${abbrs.appManagedEnvironments}mcp-${resourceToken}'
     location: location
     tags: tags
-    skuName: 'S1'
-    reserved: true
+    logAnalyticsWorkspaceResourceId: logAnalytics.outputs.resourceId
+    zoneRedundant: false
   }
 }
 
-// MCP Web App - Azure MCP Server (Docker container with Identity Passthrough)
+// MCP Container App — Azure MCP Server with OBO authentication
 module mcpApp './app/mcp.bicep' = {
   scope: rg
   params: {
     name: mcpAppName
     location: location
-    tags: union(tags, { 'azd-service-name': 'mcp' })
-    serverFarmId: mcpAppServicePlan.outputs.resourceId
-    dockerImageName: 'azure-sdk/azure-mcp:${mcpImageTag}'
-    startupCommand: '--transport http --outgoing-auth-strategy PassThrough --mode namespace --read-only --debug'
-    mcpAppClientId: mcpAppRegistration.appId
-    tenantId: subscription().tenantId
-    allowedAudiences: [
-      'api://${mcpAppRegistration.appId}'
-      mcpAppRegistration.appId
+    tags: tags
+    environmentResourceId: mcpEnvironment.outputs.resourceId
+    dockerImage: 'mcr.microsoft.com/azure-sdk/azure-mcp:${mcpImageTag}'
+    args: [
+      '--transport'
+      'http'
+      '--outgoing-auth-strategy'
+      'UseOnBehalfOf'
+      '--mode'
+      'all'
+      '--read-only'
     ]
-    appSettings: [
-      { name: 'WEBSITES_ENABLE_APP_SERVICE_STORAGE', value: 'false' }
-      { name: 'WEBSITES_PORT', value: '8080' }
-      { name: 'ASPNETCORE_URLS', value: 'http://+:8080' }
-      { name: 'ASPNETCORE_ENVIRONMENT', value: 'Production' }
-      { name: 'AZURE_MCP_DANGEROUSLY_DISABLE_HTTPS_REDIRECTION', value: 'true' }
-      { name: 'AZURE_MCP_COLLECT_TELEMETRY', value: 'true' }
-      { name: 'AZURE_LOG_LEVEL', value: 'Verbose' }
-      { name: 'WEBSITE_AUTH_AAD_ALLOWED_TENANTS', value: subscription().tenantId }
-      { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: monitoring.outputs.connectionString }
-    ]
+    azureAdTenantId: tenant().tenantId
+    azureAdClientId: mcpServerApp.appId
+    azureAdInstance: environment().authentication.loginEndpoint
+    userAssignedManagedIdentityId: mcpManagedIdentity.outputs.resourceId
+    userAssignedManagedIdentityClientId: mcpManagedIdentity.outputs.clientId
+    tokenExchangeAudience: tokenExchangeAudience
+    appInsightsConnectionString: monitoring.outputs.connectionString
   }
 }
 
@@ -603,6 +663,7 @@ output RESOURCE_GROUP string = rg.name
 output STORAGE_CONNECTION__queueServiceUri string = 'https://${storage.outputs.name}.queue.${environment().suffixes.storage}'
 output AZURE_OPENAI_ENDPOINT string = aiServiceExists ? reference(aiServiceAccountResourceId, '2023-05-01').endpoint : aiServices!.outputs.endpoint
 output AZURE_OPENAI_DEPLOYMENT_NAME string = modelName
-output MCP_SERVER_URI string = 'https://${mcpApp.outputs.defaultHostname}'
+output MCP_SERVER_URI string = 'https://${mcpApp.outputs.fqdn}'
 output MCP_SERVER_NAME string = mcpApp.outputs.name
-output MCP_APP_CLIENT_ID string = mcpAppRegistration.appId
+output MCP_SERVER_CLIENT_ID string = mcpServerApp.appId
+output MCP_CLIENT_CLIENT_ID string = mcpClientApp.appId
