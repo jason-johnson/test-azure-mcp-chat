@@ -1,5 +1,7 @@
 targetScope = 'subscription'
 
+extension microsoftGraphV1
+
 @minLength(1)
 @maxLength(64)
 @description('Name of the the environment which is used to generate a short unique hash used in all resources.')
@@ -85,9 +87,6 @@ param aiServiceAccountResourceId string = ''
 
 // ============= MCP Server Parameters =============
 
-@description('Client ID of the MCP App Registration in Entra ID. Required to deploy the MCP server.')
-param mcpAppClientId string = ''
-
 @description('Azure MCP Docker image tag from mcr.microsoft.com/azure-sdk/azure-mcp')
 param mcpImageTag string = '2.0.0-beta.23'
 
@@ -105,7 +104,6 @@ var deploymentStorageContainerName = 'app-package-${take(functionAppName, 32)}-$
 var webAppName = !empty(webServiceName) ? webServiceName : '${abbrs.webStaticSites}web-${resourceToken}'
 // Pre-compute the expected web URI for CORS settings
 var webUri = 'https://${webAppName}.azurestaticapps.net'
-var deployMcp = !empty(mcpAppClientId)
 var mcpAppName = !empty(mcpServiceName) ? mcpServiceName : '${abbrs.webSitesAppService}mcp-${resourceToken}'
 
 // Organize resources in a resource group
@@ -503,9 +501,55 @@ module dts './app/dts.bicep' = {
 
 // ============= MCP Server Resources =============
 
+// MCP App Registration in Entra ID (created via Microsoft Graph Bicep extension)
+resource mcpAppRegistration 'Microsoft.Graph/applications@v1.0' = {
+  uniqueName: '${environmentName}-mcp-server'
+  displayName: '${environmentName}-mcp-server'
+  signInAudience: 'AzureADMyOrg'
+  api: {
+    requestedAccessTokenVersion: 2
+    oauth2PermissionScopes: [
+      {
+        id: guid(subscription().id, environmentName, 'Mcp.Tools.ReadWrite')
+        adminConsentDescription: 'Allow the application to access Azure MCP tools on behalf of the signed-in user.'
+        adminConsentDisplayName: 'Azure MCP Tools ReadWrite'
+        isEnabled: true
+        type: 'User'
+        userConsentDescription: 'Allow the application to access Azure MCP tools on your behalf.'
+        userConsentDisplayName: 'Access Azure MCP tools'
+        value: 'Mcp.Tools.ReadWrite'
+      }
+    ]
+  }
+  identifierUris: [
+    'api://${environmentName}-mcp-server'
+  ]
+  requiredResourceAccess: [
+    {
+      // Microsoft Graph - User.Read
+      resourceAppId: '00000003-0000-0000-c000-000000000000'
+      resourceAccess: [
+        {
+          id: 'e1fe6dd8-ba31-4d61-89e7-88639da4683d'
+          type: 'Scope'
+        }
+      ]
+    }
+  ]
+  web: {
+    redirectUris: [
+      'https://${mcpAppName}.azurewebsites.net/.auth/login/aad/callback'
+    ]
+  }
+}
+
+// Service principal for the MCP App Registration
+resource mcpServicePrincipal 'Microsoft.Graph/servicePrincipals@v1.0' = {
+  appId: mcpAppRegistration.appId
+}
+
 // MCP App Service Plan (B1 for Docker container support - Flex Consumption does not support containers)
-module mcpAppServicePlan 'br/public:avm/res/web/serverfarm:0.5.0' = if (deployMcp) {
-  name: 'mcp-plan-${resourceToken}'
+module mcpAppServicePlan 'br/public:avm/res/web/serverfarm:0.5.0' = {
   scope: rg
   params: {
     name: '${abbrs.webServerFarms}mcp-${resourceToken}'
@@ -517,21 +561,20 @@ module mcpAppServicePlan 'br/public:avm/res/web/serverfarm:0.5.0' = if (deployMc
 }
 
 // MCP Web App - Azure MCP Server (Docker container with Identity Passthrough)
-module mcpApp './app/mcp.bicep' = if (deployMcp) {
-  name: 'mcp-${resourceToken}'
+module mcpApp './app/mcp.bicep' = {
   scope: rg
   params: {
     name: mcpAppName
     location: location
     tags: union(tags, { 'azd-service-name': 'mcp' })
-    serverFarmId: mcpAppServicePlan!.outputs.resourceId
+    serverFarmId: mcpAppServicePlan.outputs.resourceId
     dockerImageName: 'azure-sdk/azure-mcp:${mcpImageTag}'
     startupCommand: '--transport http --outgoing-auth-strategy PassThrough --mode namespace --read-only --debug'
-    mcpAppClientId: mcpAppClientId
+    mcpAppClientId: mcpAppRegistration.appId
     tenantId: subscription().tenantId
     allowedAudiences: [
-      'api://${mcpAppClientId}'
-      mcpAppClientId
+      'api://${mcpAppRegistration.appId}'
+      mcpAppRegistration.appId
     ]
     appSettings: [
       { name: 'WEBSITES_ENABLE_APP_SERVICE_STORAGE', value: 'false' }
@@ -560,5 +603,6 @@ output RESOURCE_GROUP string = rg.name
 output STORAGE_CONNECTION__queueServiceUri string = 'https://${storage.outputs.name}.queue.${environment().suffixes.storage}'
 output AZURE_OPENAI_ENDPOINT string = aiServiceExists ? reference(aiServiceAccountResourceId, '2023-05-01').endpoint : aiServices!.outputs.endpoint
 output AZURE_OPENAI_DEPLOYMENT_NAME string = modelName
-output MCP_SERVER_URI string = deployMcp ? 'https://${mcpApp!.outputs.defaultHostname}' : ''
-output MCP_SERVER_NAME string = deployMcp ? mcpApp!.outputs.name : ''
+output MCP_SERVER_URI string = 'https://${mcpApp.outputs.defaultHostname}'
+output MCP_SERVER_NAME string = mcpApp.outputs.name
+output MCP_APP_CLIENT_ID string = mcpAppRegistration.appId
