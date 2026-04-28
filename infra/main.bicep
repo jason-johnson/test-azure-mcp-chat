@@ -548,14 +548,14 @@ resource mcpServicePrincipal 'Microsoft.Graph/servicePrincipals@v1.0' = {
   appId: mcpAppRegistration.appId
 }
 
-// MCP App Service Plan (B1 for Docker container support - Flex Consumption does not support containers)
+// MCP App Service Plan (Standard tier for Docker container support - Flex Consumption does not support containers)
 module mcpAppServicePlan 'br/public:avm/res/web/serverfarm:0.5.0' = {
   scope: rg
   params: {
     name: '${abbrs.webServerFarms}mcp-${resourceToken}'
     location: location
     tags: tags
-    skuName: 'B1'
+    skuName: 'S1'
     reserved: true
   }
 }
