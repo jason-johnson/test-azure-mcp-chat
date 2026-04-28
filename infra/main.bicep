@@ -46,15 +46,6 @@ param vNetName string = ''
 @description('Disable local authentication for Azure Monitor')
 param disableLocalAuth bool = true
 
-@description('Name of the Durable Task Scheduler')
-param dtsName string = ''
-
-@description('Name of the task hub')
-param taskHubName string = ''
-
-@description('Durable Task Scheduler SKU name')
-param dtsSkuName string = 'Consumption'
-
 @description('Name of the web service')
 param webServiceName string = ''
 
@@ -73,17 +64,11 @@ param modelFormat string = 'OpenAI'
 @description('Model version for deployment')
 param modelVersion string = '2025-04-14'
 
-@description('Model deployment SKU name')
-param modelSkuName string = 'S0'
-
 @description('Model deployment capacity')
 param modelCapacity int = 10
 
 @description('Model deployment location. If you want to deploy an Azure AI resource/model in different location than the rest of the resources created.')
 param modelLocation string = location
-
-@description('The AI Service Account full ARM Resource ID. This is an optional field, and if not provided, the resource will be created.')
-param aiServiceAccountResourceId string = ''
 
 // ============= MCP Server Parameters =============
 
@@ -272,9 +257,7 @@ module api 'br/public:avm/res/web/site:0.19.3' = {
         { name: 'AzureWebJobsStorage__queueServiceUri', value: 'https://${storage.outputs.name}.queue.${environment().suffixes.storage}' }
         { name: 'AzureWebJobsStorage__tableServiceUri', value: 'https://${storage.outputs.name}.table.${environment().suffixes.storage}' }
         { name: 'AzureWebJobsStorage__accountName', value: storage.outputs.name }
-        { name: 'DURABLE_TASK_SCHEDULER_CONNECTION_STRING', value: 'Endpoint=${dts.outputs.dts_URL};Authentication=ManagedIdentity;ClientID=${apiUserAssignedIdentity.outputs.clientId}' }
-        { name: 'TASKHUB_NAME', value: dts.outputs.TASKHUB_NAME }
-        { name: 'AZURE_OPENAI_ENDPOINT', value: aiServiceExists ? reference(aiServiceAccountResourceId, '2023-05-01').endpoint : aiServices!.outputs.endpoint }
+        { name: 'FOUNDRY_PROJECT_ENDPOINT', value: foundry.outputs.projectEndpoint }
         { name: 'AZURE_OPENAI_DEPLOYMENT_NAME', value: modelName }
         { name: 'AZURE_CLIENT_ID', value: apiUserAssignedIdentity.outputs.clientId }
         { name: 'APPLICATIONINSIGHTS_AUTHENTICATION_STRING', value: 'ClientId=${apiUserAssignedIdentity.outputs.clientId};Authorization=AAD' }
@@ -284,49 +267,44 @@ module api 'br/public:avm/res/web/site:0.19.3' = {
   }
 }
 
-// AI Services configuration
-var aiServiceExists = aiServiceAccountResourceId != ''
+// AI Foundry resource + project
 var aiServiceName = '${aiServicesName}${aiResourceToken}'
 
-// AI Services (Cognitive Services) using AVM with model deployment
-module aiServices 'br/public:avm/res/cognitive-services/account:0.9.2' = if (!aiServiceExists) {
+module foundry './app/foundry.bicep' = {
   scope: rg
-  name: 'aiServices-${aiResourceToken}'
+  name: 'foundry-${aiResourceToken}'
   params: {
     name: aiServiceName
+    projectName: '${environmentName}-project'
     location: modelLocation
     tags: tags
-    kind: 'AIServices'
-    customSubDomainName: toLower(aiServiceName)
-    publicNetworkAccess: 'Enabled'
-    disableLocalAuth: true
-    sku: modelSkuName
-    deployments: [
-      {
-        name: modelName
-        model: {
-          format: modelFormat
-          name: modelName
-          version: modelVersion
-        }
-        sku: {
-          name: 'GlobalStandard'
-          capacity: modelCapacity
-        }
-      }
-    ]
-    roleAssignments: [
-      {
-        principalId: apiUserAssignedIdentity.outputs.principalId
-        roleDefinitionIdOrName: '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd' // Cognitive Services OpenAI User
-        principalType: 'ServicePrincipal'
-      }
-      {
-        principalId: principalId
-        roleDefinitionIdOrName: '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd' // Cognitive Services OpenAI User
-        principalType: 'User'
-      }
-    ]
+    modelName: modelName
+    modelFormat: modelFormat
+    modelVersion: modelVersion
+    modelCapacity: modelCapacity
+  }
+}
+
+// Role assignments for the Function App MI on the Foundry resource
+module foundryRoleApi 'br/public:avm/ptn/authorization/resource-role-assignment:0.1.2' = {
+  scope: rg
+  name: 'foundryRoleApi-${resourceToken}'
+  params: {
+    principalId: apiUserAssignedIdentity.outputs.principalId
+    roleDefinitionId: '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd' // Cognitive Services OpenAI User
+    principalType: 'ServicePrincipal'
+    resourceId: foundry.outputs.resourceId
+  }
+}
+
+module foundryRoleUser 'br/public:avm/ptn/authorization/resource-role-assignment:0.1.2' = {
+  scope: rg
+  name: 'foundryRoleUser-${resourceToken}'
+  params: {
+    principalId: principalId
+    roleDefinitionId: '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd' // Cognitive Services OpenAI User
+    principalType: 'User'
+    resourceId: foundry.outputs.resourceId
   }
 }
 
@@ -456,46 +434,6 @@ module monitoring 'br/public:avm/res/insights/component:0.7.1' = {
         principalType: 'ServicePrincipal'
       }
     ]
-  }
-}
-
-var durableTaskDataContributorRoleDefinitionId = '0ad04412-c4d5-4796-b79c-f76d14c8d402'
-
-module dtsRoleApi 'br/public:avm/ptn/authorization/resource-role-assignment:0.1.2' = {
-  scope: rg
-  name: 'dtsRoleApi-${resourceToken}'
-  params: {
-    principalId: apiUserAssignedIdentity.outputs.principalId
-    roleDefinitionId: durableTaskDataContributorRoleDefinitionId
-    principalType: 'ServicePrincipal'
-    resourceId: dts.outputs.dts_ID
-  }
-}
-
-module dtsRoleUser 'br/public:avm/ptn/authorization/resource-role-assignment:0.1.2' = {
-  scope: rg
-  name: 'dtsRoleUser-${resourceToken}'
-  params: {
-    principalId: principalId
-    roleDefinitionId: durableTaskDataContributorRoleDefinitionId
-    principalType: 'User'
-    resourceId: dts.outputs.dts_ID
-  }
-}
-
-// Durable Task Scheduler doesn't have AVM support yet
-module dts './app/dts.bicep' = {
-  scope: rg
-  name: 'dtsResource-${resourceToken}'
-  params: {
-    name: !empty(dtsName) ? dtsName : '${abbrs.dts}${resourceToken}'
-    taskhubname: !empty(taskHubName) ? taskHubName : '${abbrs.taskhub}${resourceToken}'
-    location: location
-    tags: tags
-    ipAllowlist: [
-      '0.0.0.0/0'
-    ]
-    skuName: dtsSkuName
   }
 }
 
@@ -661,8 +599,9 @@ output STATIC_WEB_APP_URI string = 'https://${webapp.outputs.defaultHostname}'
 output PRE_STATIC_WEB_APP_URI string = webAppName
 output RESOURCE_GROUP string = rg.name
 output STORAGE_CONNECTION__queueServiceUri string = 'https://${storage.outputs.name}.queue.${environment().suffixes.storage}'
-output AZURE_OPENAI_ENDPOINT string = aiServiceExists ? reference(aiServiceAccountResourceId, '2023-05-01').endpoint : aiServices!.outputs.endpoint
+output AZURE_OPENAI_ENDPOINT string = foundry.outputs.endpoint
 output AZURE_OPENAI_DEPLOYMENT_NAME string = modelName
+output FOUNDRY_PROJECT_ENDPOINT string = foundry.outputs.projectEndpoint
 output MCP_SERVER_URI string = 'https://${mcpApp.outputs.fqdn}'
 output MCP_SERVER_NAME string = mcpApp.outputs.name
 output MCP_SERVER_CLIENT_ID string = mcpServerApp.appId

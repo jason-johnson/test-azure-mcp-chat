@@ -1,103 +1,112 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 import ReactMarkdown from 'react-markdown';
 import '../ChatInterface.css';
-import ProgressTracker from './ProgressTracker';
-import './progress-tracker.css';
 
-// Get API URL from environment variables
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:7071/api';
 
 const ChatInterface = () => {
-  // Travel request state
-  const [travelRequest, setTravelRequest] = useState({
-    userName: '',
-    preferences: '',
-    durationInDays: 7,
-    budget: '',
-    travelDates: '',
-    specialRequirements: ''
-  });
-
-  // Chat and UI state
   const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [instanceId, setInstanceId] = useState(null);
-  const [statusPolling, setStatusPolling] = useState(false);
-  const [formSubmitted, setFormSubmitted] = useState(false);
-  const [planReadyForApproval, setPlanReadyForApproval] = useState(false);
-  const [planData, setPlanData] = useState(null);
-  const [approvalStatus, setApprovalStatus] = useState(null); // New state for tracking approval status
-  const [confirmationStatus, setConfirmationStatus] = useState(null); // New state to track trip confirmation status
-  const [orchestrationStatus, setOrchestrationStatus] = useState(null); // New state for tracking orchestration steps
-  const chatHistoryRef = useRef(null);
-  
-  // Auto-scroll to the bottom of chat when new messages arrive
+  const [threadId, setThreadId] = useState(null);
+  const chatEndRef = useRef(null);
+
   useEffect(() => {
-    if (chatHistoryRef.current) {
-      chatHistoryRef.current.scrollTop = chatHistoryRef.current.scrollHeight;
-    }
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Handle input changes for all form fields
-  const handleInputChange = (e) => {
-    const { name, value } = e.target;
-    
-    // Convert durationInDays to number if it's that field
-    if (name === 'durationInDays') {
-      setTravelRequest({
-        ...travelRequest,
-        [name]: parseInt(value, 10) || 1 // Default to 1 if parsing fails
-      });
-    } else {
-      setTravelRequest({
-        ...travelRequest,
-        [name]: value
-      });
+  const sendMessage = async (e) => {
+    e.preventDefault();
+    const text = input.trim();
+    if (!text || loading) return;
+
+    setInput('');
+    setMessages((prev) => [...prev, { role: 'user', content: text }]);
+    setLoading(true);
+
+    try {
+      const url = threadId
+        ? `${API_URL}/chat/${threadId}`
+        : `${API_URL}/chat`;
+
+      const res = await axios.post(url, { message: text });
+
+      if (res.data.threadId) {
+        setThreadId(res.data.threadId);
+      }
+
+      setMessages((prev) => [
+        ...prev,
+        { role: 'assistant', content: res.data.response },
+      ]);
+    } catch (err) {
+      const errorMsg =
+        err.response?.data?.error || err.message || 'Something went wrong';
+      setMessages((prev) => [
+        ...prev,
+        { role: 'assistant', content: `**Error:** ${errorMsg}` },
+      ]);
+    } finally {
+      setLoading(false);
     }
   };
 
-  // Submit the travel request form
-  const submitTravelRequest = async () => {
-    if (!travelRequest.userName || !travelRequest.preferences) {
-      alert('Please fill out your name and travel preferences at minimum.');
-      return;
-    }
+  const startNewChat = () => {
+    setMessages([]);
+    setThreadId(null);
+  };
 
-    setLoading(true);
-    setFormSubmitted(true);
-    
-    // Add user request to messages
-    const requestSummary = `
-# Travel Request Submitted
+  return (
+    <div className="chat-container">
+      <div className="chat-header">
+        <h1>Azure MCP Chat</h1>
+        <button className="new-chat-btn" onClick={startNewChat}>
+          New Chat
+        </button>
+      </div>
 
-* **Name**: ${travelRequest.userName}
-* **Preferences**: ${travelRequest.preferences}
-* **Duration**: ${travelRequest.durationInDays} days
-* **Budget**: ${travelRequest.budget}
-* **Dates**: ${travelRequest.travelDates}
-* **Special Requirements**: ${travelRequest.specialRequirements}
-    `;
-    
-    setMessages([...messages, { role: 'user', content: requestSummary }]);
+      <div className="chat-messages">
+        {messages.length === 0 && (
+          <div className="empty-state">
+            <p>Ask me anything about your Azure resources.</p>
+          </div>
+        )}
+        {messages.map((msg, i) => (
+          <div key={i} className={`message ${msg.role}`}>
+            <div className="message-content">
+              <ReactMarkdown>{msg.content}</ReactMarkdown>
+            </div>
+          </div>
+        ))}
+        {loading && (
+          <div className="message assistant">
+            <div className="message-content loading-dots">
+              <span>.</span><span>.</span><span>.</span>
+            </div>
+          </div>
+        )}
+        <div ref={chatEndRef} />
+      </div>
 
-    try {
-      // Send request to the travel planner API
-      const response = await axios.post(`${API_URL}/travel-planner`, travelRequest, {
-        headers: {
-          'Content-Type': 'application/json'
-        }
-      });
+      <form className="chat-input-form" onSubmit={sendMessage}>
+        <input
+          type="text"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder="Type a message..."
+          disabled={loading}
+          autoFocus
+        />
+        <button type="submit" disabled={loading || !input.trim()}>
+          Send
+        </button>
+      </form>
+    </div>
+  );
+};
 
-      // Store the instance ID for status checking
-      if (response.data && response.data.id) {
-        setInstanceId(response.data.id);
-        setStatusPolling(true);
-        
-        // Add system message
-        setMessages(prevMessages => [...prevMessages, { 
-          role: 'bot', 
-          content: `Your travel plan request is being processed. ID: ${response.data.id}`
+export default ChatInterface;
         }]);
       }
     } catch (error) {

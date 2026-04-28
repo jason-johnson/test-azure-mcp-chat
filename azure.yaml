@@ -1,6 +1,6 @@
-name: travel-planner
+name: azure-mcp-chat
 metadata:
-  template: travel-planner@0.0.1
+  template: azure-mcp-chat@0.0.1
 services:
   api:
     project: ./api
