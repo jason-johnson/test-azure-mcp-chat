@@ -1,8 +1,8 @@
-trigger:
-  batch: true
-  branches:
-    include:
-      - "*"
+trigger: none
+#  batch: true
+#  branches:
+#    include:
+#      - "*"
 
 parameters:
   - name: acrTaskBranches
