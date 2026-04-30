@@ -259,6 +259,7 @@ module api 'br/public:avm/res/web/site:0.19.3' = {
         { name: 'AzureWebJobsStorage__accountName', value: storage.outputs.name }
         { name: 'FOUNDRY_PROJECT_ENDPOINT', value: foundry.outputs.projectEndpoint }
         { name: 'AZURE_OPENAI_DEPLOYMENT_NAME', value: modelName }
+        { name: 'MCP_SERVER_URL', value: 'https://${mcpApp.outputs.fqdn}' }
         { name: 'AZURE_CLIENT_ID', value: apiUserAssignedIdentity.outputs.clientId }
         { name: 'APPLICATIONINSIGHTS_AUTHENTICATION_STRING', value: 'ClientId=${apiUserAssignedIdentity.outputs.clientId};Authorization=AAD' }
         { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: monitoring.outputs.connectionString }
@@ -291,7 +292,7 @@ module foundryRoleApi 'br/public:avm/ptn/authorization/resource-role-assignment:
   name: 'foundryRoleApi-${resourceToken}'
   params: {
     principalId: apiUserAssignedIdentity.outputs.principalId
-    roleDefinitionId: '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd' // Cognitive Services OpenAI User
+    roleDefinitionId: '53ca6127-db72-4b80-b1b0-d745d6d5456d' // Azure AI User
     principalType: 'ServicePrincipal'
     resourceId: foundry.outputs.resourceId
   }
@@ -302,7 +303,7 @@ module foundryRoleUser 'br/public:avm/ptn/authorization/resource-role-assignment
   name: 'foundryRoleUser-${resourceToken}'
   params: {
     principalId: principalId
-    roleDefinitionId: '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd' // Cognitive Services OpenAI User
+    roleDefinitionId: '53ca6127-db72-4b80-b1b0-d745d6d5456d' // Azure AI User
     principalType: 'User'
     resourceId: foundry.outputs.resourceId
   }

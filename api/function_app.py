@@ -2,8 +2,8 @@
 Foundry Agent Service proxy API.
 
 Thin Function App that proxies chat requests to a Foundry Agent Service agent.
-The agent is created lazily on first request and cached. Threads (conversations)
-are managed by Foundry — no local state needed.
+Uses the azure-ai-projects v2 SDK with the OpenAI Responses API pattern.
+Conversations are managed by Foundry — no local state needed.
 """
 import os
 import json
@@ -12,13 +12,14 @@ import logging
 import azure.functions as func
 from azure.identity import DefaultAzureCredential, ManagedIdentityCredential
 from azure.ai.projects import AIProjectClient
+from azure.ai.projects.models import MCPTool, PromptAgentDefinition
 
 logger = logging.getLogger(__name__)
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
-# Cached agent ID — created once, reused across requests
-_agent_id: str | None = None
+# Cached agent name — created once, reused across requests
+_agent_name: str | None = None
 
 
 def _get_credential():
@@ -29,7 +30,7 @@ def _get_credential():
     return DefaultAzureCredential()
 
 
-def _get_client() -> AIProjectClient:
+def _get_project_client() -> AIProjectClient:
     """Get Foundry project client."""
     return AIProjectClient(
         endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
@@ -37,26 +38,44 @@ def _get_client() -> AIProjectClient:
     )
 
 
-def _ensure_agent(client: AIProjectClient) -> str:
-    """Create or retrieve the Azure MCP agent."""
-    global _agent_id
-    if _agent_id:
-        return _agent_id
+def _ensure_agent(project: AIProjectClient) -> str:
+    """Create or retrieve the agent. Returns the agent name."""
+    global _agent_name
+    if _agent_name:
+        return _agent_name
 
     model = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4.1")
+    name = "azure-mcp-agent"
 
-    agent = client.agents.create_agent(
-        model=model,
-        name="azure-mcp-agent",
-        instructions=(
-            "You are a helpful assistant that can manage Azure resources. "
-            "Use the available tools to list, inspect, and manage Azure resources "
-            "on behalf of the user. Be concise and format responses in markdown."
+    # Build tools list — add MCP server if configured
+    tools = []
+    mcp_url = os.environ.get("MCP_SERVER_URL")
+    if mcp_url:
+        tools.append(
+            MCPTool(
+                server_label="azure-mcp",
+                server_url=mcp_url,
+                server_description="Azure MCP Server for managing Azure resources",
+                require_approval="never",
+            )
+        )
+        logger.info("MCP tool configured: %s", mcp_url)
+
+    agent = project.agents.create_version(
+        agent_name=name,
+        definition=PromptAgentDefinition(
+            model=model,
+            instructions=(
+                "You are a helpful assistant that can manage Azure resources. "
+                "Use the available tools to list, inspect, and manage Azure resources "
+                "on behalf of the user. Be concise and format responses in markdown."
+            ),
+            tools=tools if tools else None,
         ),
     )
-    _agent_id = agent.id
-    logger.info("Created agent: %s", _agent_id)
-    return _agent_id
+    _agent_name = agent.name
+    logger.info("Created agent: %s (version: %s)", agent.name, agent.version)
+    return _agent_name
 
 
 # --------------- HTTP Endpoints ---------------
@@ -65,17 +84,18 @@ def _ensure_agent(client: AIProjectClient) -> str:
 @app.function_name("CreateThread")
 @app.route(route="threads", methods=["POST"])
 def create_thread(req: func.HttpRequest) -> func.HttpResponse:
-    """Create a new conversation thread."""
+    """Create a new conversation."""
     try:
-        client = _get_client()
-        thread = client.agents.threads.create()
+        project = _get_project_client()
+        openai = project.get_openai_client()
+        conversation = openai.conversations.create()
         return func.HttpResponse(
-            json.dumps({"threadId": thread.id}),
+            json.dumps({"threadId": conversation.id}),
             status_code=201,
             mimetype="application/json",
         )
     except Exception as ex:
-        logger.error("Error creating thread: %s", ex)
+        logger.error("Error creating conversation: %s", ex)
         return func.HttpResponse(
             json.dumps({"error": str(ex)}),
             status_code=500,
@@ -89,7 +109,7 @@ def chat(req: func.HttpRequest) -> func.HttpResponse:
     """Send a message and get a response.
 
     If threadId is provided, continues an existing conversation.
-    Otherwise creates a new thread.
+    Otherwise creates a new conversation.
     """
     try:
         body = req.get_json()
@@ -101,93 +121,41 @@ def chat(req: func.HttpRequest) -> func.HttpResponse:
                 mimetype="application/json",
             )
 
-        client = _get_client()
-        agent_id = _ensure_agent(client)
+        project = _get_project_client()
+        agent_name = _ensure_agent(project)
+        openai = project.get_openai_client()
 
-        # Get or create thread
-        thread_id = req.route_params.get("threadId")
-        if not thread_id:
-            thread = client.agents.threads.create()
-            thread_id = thread.id
+        # Get or create conversation
+        conversation_id = req.route_params.get("threadId")
+        if not conversation_id:
+            conversation = openai.conversations.create()
+            conversation_id = conversation.id
 
-        # Add user message
-        client.agents.threads.messages.create(
-            thread_id=thread_id,
-            role="user",
-            content=message,
+        # Send message and get response via the Responses API
+        response = openai.responses.create(
+            input=message,
+            conversation=conversation_id,
+            extra_body={
+                "agent_reference": {
+                    "name": agent_name,
+                    "type": "agent_reference",
+                }
+            },
         )
 
-        # Run the agent
-        run = client.agents.threads.runs.create_and_process(
-            thread_id=thread_id,
-            agent_id=agent_id,
-        )
-
-        # Get the assistant's response messages
-        messages = client.agents.threads.messages.list(thread_id=thread_id)
-        assistant_messages = []
-        for msg in messages.data:
-            if msg.role == "assistant":
-                for content in msg.content:
-                    if hasattr(content, "text"):
-                        assistant_messages.append(content.text.value)
-                break  # Only get the latest assistant message
-
-        response_text = assistant_messages[0] if assistant_messages else "No response generated."
+        response_text = response.output_text or "No response generated."
 
         return func.HttpResponse(
             json.dumps({
-                "threadId": thread_id,
+                "threadId": conversation_id,
                 "response": response_text,
-                "status": run.status,
+                "status": "completed",
             }),
             status_code=200,
             mimetype="application/json",
         )
     except Exception as ex:
         logger.error("Error in chat: %s", ex)
-        return func.HttpResponse(
-            json.dumps({"error": str(ex)}),
-            status_code=500,
-            mimetype="application/json",
-        )
-
-
-@app.function_name("GetThread")
-@app.route(route="threads/{threadId}", methods=["GET"])
-def get_thread(req: func.HttpRequest) -> func.HttpResponse:
-    """Get conversation history for a thread."""
-    try:
-        thread_id = req.route_params.get("threadId")
-        if not thread_id:
-            return func.HttpResponse(
-                json.dumps({"error": "threadId is required"}),
-                status_code=400,
-                mimetype="application/json",
-            )
-
-        client = _get_client()
-        messages = client.agents.threads.messages.list(thread_id=thread_id)
-
-        history = []
-        for msg in reversed(messages.data):
-            content_parts = []
-            for content in msg.content:
-                if hasattr(content, "text"):
-                    content_parts.append(content.text.value)
-            if content_parts:
-                history.append({
-                    "role": msg.role,
-                    "content": "\n".join(content_parts),
-                })
-
-        return func.HttpResponse(
-            json.dumps({"threadId": thread_id, "messages": history}),
-            status_code=200,
-            mimetype="application/json",
-        )
-    except Exception as ex:
-        logger.error("Error getting thread: %s", ex)
         return func.HttpResponse(
             json.dumps({"error": str(ex)}),
             status_code=500,
