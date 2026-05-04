@@ -11,14 +11,8 @@
     "modelLocation": {
       "value": "${MODEL_LOCATION}"
     },
-    "skipVnet": {
-      "value": true
-    },
     "principalId": {
       "value": "${AZURE_PRINCIPAL_ID}"
-    },
-    "storageAccountName": {
-      "value": "${AZURE_STORAGE_ACCOUNT}"
     }
   }
 }
