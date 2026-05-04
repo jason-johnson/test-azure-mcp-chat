@@ -260,6 +260,7 @@ module api 'br/public:avm/res/web/site:0.19.3' = {
         { name: 'FOUNDRY_PROJECT_ENDPOINT', value: foundry.outputs.projectEndpoint }
         { name: 'AZURE_OPENAI_DEPLOYMENT_NAME', value: modelName }
         { name: 'MCP_SERVER_URL', value: 'https://${mcpApp.outputs.fqdn}' }
+        { name: 'MCP_TOOL_CONNECTION_ID', value: '${foundry.outputs.resourceId}/projects/${environmentName}-project/connections/azure-mcp' }
         { name: 'AZURE_CLIENT_ID', value: apiUserAssignedIdentity.outputs.clientId }
         { name: 'APPLICATIONINSIGHTS_AUTHENTICATION_STRING', value: 'ClientId=${apiUserAssignedIdentity.outputs.clientId};Authorization=AAD' }
         { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: monitoring.outputs.connectionString }
