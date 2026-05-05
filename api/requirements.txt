@@ -5,13 +5,11 @@
 azure-functions
 azure-functions-durable
 azure-identity
-pydantic
 
-# Agent Framework for Durable Agents
-agent-framework-azurefunctions
+# Agent Framework
+agent-framework-core
 agent-framework-azure-ai
-agent-framework-durabletask>=0.0.2b260126
 
-# MCP client for Azure MCP Server
+# MCP client for Azure MCP Server and Freshdesk MCP Server
 mcp>=1.24.0,<2
 httpx

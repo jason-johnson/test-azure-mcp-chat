@@ -93,6 +93,9 @@ param mcpImageTag string = 'latest'
 @description('Name of the MCP app service')
 param mcpServiceName string = ''
 
+@description('Freshdesk MCP server URI (leave empty to use stub tools)')
+param freshdeskMcpUri string = ''
+
 // Variables
 var abbrs = loadJsonContent('./abbreviations.json')
 var resourceToken = toLower(uniqueString(subscription().id, rg.id, environmentName, location))
@@ -280,6 +283,7 @@ module api 'br/public:avm/res/web/site:0.19.3' = {
         { name: 'APPLICATIONINSIGHTS_AUTHENTICATION_STRING', value: 'ClientId=${apiUserAssignedIdentity.outputs.clientId};Authorization=AAD' }
         { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: monitoring.outputs.connectionString }
         { name: 'MCP_SERVER_URI', value: 'https://${mcpApp.outputs.fqdn}' }
+        { name: 'FRESHDESK_MCP_URI', value: freshdeskMcpUri }
       ]
     }
   }

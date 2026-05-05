@@ -16,7 +16,7 @@ const LoginButton = () => {
   return (
     <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh' }}>
       <div style={{ textAlign: 'center', padding: '2rem' }}>
-        <h1>AI Travel Planner</h1>
+        <h1>Azure Support Assistant</h1>
         <p>Sign in with your Microsoft account to get started.</p>
         <button
           onClick={handleLogin}
