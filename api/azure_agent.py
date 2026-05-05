@@ -11,7 +11,7 @@ import logging
 
 import httpx
 from agent_framework import MCPStreamableHTTPTool
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import DefaultAzureCredential, ManagedIdentityCredential
 
 logger = logging.getLogger(__name__)
@@ -66,9 +66,9 @@ async def run_azure_query(query: str, user_access_token: str) -> str:
         http_client=http_client,
     )
 
-    client = AzureOpenAIChatClient(
-        endpoint=endpoint,
-        deployment_name=deployment_name,
+    client = OpenAIChatClient(
+        azure_endpoint=endpoint,
+        model=deployment_name,
         credential=_get_credential(),
     )
 

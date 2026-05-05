@@ -11,7 +11,7 @@ from typing import Optional
 
 import httpx
 from agent_framework import MCPStreamableHTTPTool, FunctionTool, tool
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import DefaultAzureCredential, ManagedIdentityCredential
 
 logger = logging.getLogger(__name__)
@@ -164,9 +164,9 @@ async def run_ticket_query(query: str, user_access_token: Optional[str] = None) 
     deployment_name = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o-mini")
     freshdesk_mcp_url = os.environ.get("FRESHDESK_MCP_URI")
 
-    client = AzureOpenAIChatClient(
-        endpoint=endpoint,
-        deployment_name=deployment_name,
+    client = OpenAIChatClient(
+        azure_endpoint=endpoint,
+        model=deployment_name,
         credential=_get_credential(),
     )
 

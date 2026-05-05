@@ -1,25 +1,61 @@
 """
-Azure Support Assistant — two-agent system for Azure resource queries and ticket search.
+Azure Support Assistant — two-agent system using Microsoft Agent Framework.
 
-Agents:
-  - Azure Agent: Uses Azure MCP server to query/inspect Azure resources (OBO user identity)
-  - Ticket Agent: Uses Freshdesk MCP server (or stub tools) to search support tickets
+Uses AgentFunctionApp as the application host. Two agents are registered:
+  - AzureResourceAgent: Queries Azure resources via Azure MCP server (OBO user identity)
+  - TicketAgent: Searches support tickets via Freshdesk MCP server (or stub tools)
 
-Each agent runs inside a Durable Functions activity so it can perform async I/O
-(MCP connections, LLM calls) outside the deterministic orchestrator.
+Agents run inside durable function activities to support async MCP connections
+with per-request user tokens. The registered agents provide the framework with
+metadata for health checks and discovery, while actual MCP-connected execution
+happens in the activity functions.
 """
 import os
 import logging
+import json
 
 import azure.functions as func
-import azure.durable_functions as df
+from agent_framework.openai import OpenAIChatClient
+from agent_framework.azure import AgentFunctionApp
+from azure.identity import DefaultAzureCredential, ManagedIdentityCredential
 
-from azure_agent import run_azure_query
-from ticket_agent import run_ticket_query
+from azure_agent import run_azure_query, AZURE_AGENT_INSTRUCTIONS
+from ticket_agent import run_ticket_query, TICKET_AGENT_INSTRUCTIONS
 
 logger = logging.getLogger(__name__)
 
-app = df.DFApp(http_auth_level=func.AuthLevel.ANONYMOUS)
+
+def _get_credential():
+    """Get credential — ManagedIdentity when deployed, DefaultAzureCredential locally."""
+    client_id = os.environ.get("AZURE_CLIENT_ID")
+    if client_id:
+        return ManagedIdentityCredential(client_id=client_id)
+    return DefaultAzureCredential()
+
+
+# ================== Agent Registration ==================
+
+_client = OpenAIChatClient(
+    azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT", ""),
+    model=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o-mini"),
+    credential=_get_credential(),
+)
+
+_azure_agent = _client.as_agent(
+    name="AzureResourceAgent",
+    instructions=AZURE_AGENT_INSTRUCTIONS,
+)
+
+_ticket_agent = _client.as_agent(
+    name="TicketAgent",
+    instructions=TICKET_AGENT_INSTRUCTIONS,
+)
+
+app = AgentFunctionApp(
+    agents=[_azure_agent, _ticket_agent],
+    http_auth_level=func.AuthLevel.ANONYMOUS,
+    enable_http_endpoints=False,
+)
 
 
 # ================== Activity Functions ==================
@@ -58,7 +94,7 @@ async def search_tickets_activity(request: dict) -> dict:
 # ================== Orchestrations ==================
 
 @app.orchestration_trigger(context_name="context")
-def azure_query_orchestration(context: df.DurableOrchestrationContext):
+def azure_query_orchestration(context):
     """Orchestration: run an Azure resource query."""
     request = context.get_input()
     result = yield context.call_activity("query_azure_resources", request)
@@ -66,7 +102,7 @@ def azure_query_orchestration(context: df.DurableOrchestrationContext):
 
 
 @app.orchestration_trigger(context_name="context")
-def ticket_query_orchestration(context: df.DurableOrchestrationContext):
+def ticket_query_orchestration(context):
     """Orchestration: run a ticket search query."""
     request = context.get_input()
     result = yield context.call_activity("search_tickets_activity", request)
@@ -74,7 +110,7 @@ def ticket_query_orchestration(context: df.DurableOrchestrationContext):
 
 
 @app.orchestration_trigger(context_name="context")
-def combined_query_orchestration(context: df.DurableOrchestrationContext):
+def combined_query_orchestration(context):
     """Orchestration: run both agents in parallel and combine results."""
     request = context.get_input()
 
@@ -90,7 +126,6 @@ def combined_query_orchestration(context: df.DurableOrchestrationContext):
 
 
 # ================== HTTP Endpoints ==================
-import json
 
 
 @app.function_name(name="AzureQuery")

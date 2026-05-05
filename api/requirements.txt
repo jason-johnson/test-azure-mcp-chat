@@ -8,7 +8,9 @@ azure-identity
 
 # Agent Framework
 agent-framework-core
-agent-framework-azure-ai
+agent-framework-openai
+agent-framework-azurefunctions
+agent-framework-durabletask
 
 # MCP client for Azure MCP Server and Freshdesk MCP Server
 mcp>=1.24.0,<2
