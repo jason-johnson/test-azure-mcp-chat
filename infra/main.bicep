@@ -279,6 +279,7 @@ module api 'br/public:avm/res/web/site:0.19.3' = {
         { name: 'AZURE_CLIENT_ID', value: apiUserAssignedIdentity.outputs.clientId }
         { name: 'APPLICATIONINSIGHTS_AUTHENTICATION_STRING', value: 'ClientId=${apiUserAssignedIdentity.outputs.clientId};Authorization=AAD' }
         { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: monitoring.outputs.connectionString }
+        { name: 'MCP_SERVER_URI', value: 'https://${mcpApp.outputs.fqdn}' }
       ]
     }
   }
@@ -592,17 +593,41 @@ resource mcpFederatedCredential 'Microsoft.Graph/applications/federatedIdentityC
   subject: mcpManagedIdentity.outputs.principalId
 }
 
-// Client App Registration — used by Foundry/Copilot Studio to authenticate
+// Client App Registration — used by the SPA frontend to authenticate users
 resource mcpClientApp 'Microsoft.Graph/applications@v1.0' = {
   uniqueName: mcpClientUniqueName
   displayName: '${environmentName} MCP Client'
   signInAudience: 'AzureADMyOrg'
+  spa: {
+    redirectUris: [
+      'http://localhost:3000'
+      webUri
+      'https://${webapp.outputs.defaultHostname}'
+    ]
+  }
   publicClient: {
     redirectUris: [
       'http://localhost'
     ]
   }
   isFallbackPublicClient: true
+}
+
+// Update client app to add API permissions for MCP Server (separate to avoid cycle)
+resource mcpClientAppUpdate 'Microsoft.Graph/applications@v1.0' = {
+  uniqueName: mcpClientUniqueName
+  displayName: '${environmentName} MCP Client'
+  requiredResourceAccess: [
+    {
+      resourceAppId: mcpServerApp.appId
+      resourceAccess: [
+        {
+          id: mcpScopeId
+          type: 'Scope'
+        }
+      ]
+    }
+  ]
 }
 
 // Service principal for the client app
@@ -667,3 +692,4 @@ output MCP_SERVER_URI string = 'https://${mcpApp.outputs.fqdn}'
 output MCP_SERVER_NAME string = mcpApp.outputs.name
 output MCP_SERVER_CLIENT_ID string = mcpServerApp.appId
 output MCP_CLIENT_CLIENT_ID string = mcpClientApp.appId
+output AZURE_TENANT_ID string = tenant().tenantId

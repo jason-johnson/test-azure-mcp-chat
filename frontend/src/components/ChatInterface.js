@@ -1,14 +1,18 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import ReactMarkdown from 'react-markdown';
+import { useMsal } from '@azure/msal-react';
 import '../ChatInterface.css';
 import ProgressTracker from './ProgressTracker';
 import './progress-tracker.css';
+import { mcpScopes } from '../authConfig';
 
 // Get API URL from environment variables
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:7071/api';
 
 const ChatInterface = () => {
+  const { instance, accounts } = useMsal();
+
   // Travel request state
   const [travelRequest, setTravelRequest] = useState({
     userName: '',
@@ -30,6 +34,8 @@ const ChatInterface = () => {
   const [approvalStatus, setApprovalStatus] = useState(null); // New state for tracking approval status
   const [confirmationStatus, setConfirmationStatus] = useState(null); // New state to track trip confirmation status
   const [orchestrationStatus, setOrchestrationStatus] = useState(null); // New state for tracking orchestration steps
+  const [azureQuery, setAzureQuery] = useState(''); // Azure resource query input
+  const [azureQueryLoading, setAzureQueryLoading] = useState(false); // Loading state for Azure queries
   const chatHistoryRef = useRef(null);
   
   // Auto-scroll to the bottom of chat when new messages arrive
@@ -714,6 +720,83 @@ ${plan.bookingConfirmation.replace("Travel plan was not approved. Comments: ", "
     }
   };
 
+  // Acquire an access token for the MCP server silently (or via popup if needed)
+  const acquireMcpToken = async () => {
+    const account = accounts[0];
+    if (!account) throw new Error('No authenticated account');
+
+    try {
+      const response = await instance.acquireTokenSilent({
+        scopes: mcpScopes,
+        account,
+      });
+      return response.accessToken;
+    } catch {
+      // Silent token acquisition failed — fall back to popup
+      const response = await instance.acquireTokenPopup({
+        scopes: mcpScopes,
+        account,
+      });
+      return response.accessToken;
+    }
+  };
+
+  // Submit an Azure resource query via the MCP-connected agent
+  const submitAzureQuery = async () => {
+    if (!azureQuery.trim()) return;
+
+    const queryText = azureQuery.trim();
+    setAzureQuery('');
+    setAzureQueryLoading(true);
+
+    setMessages(prev => [...prev, { role: 'user', content: queryText }]);
+
+    try {
+      const token = await acquireMcpToken();
+
+      // Start the Azure query orchestration
+      const startResponse = await axios.post(`${API_URL}/azure-query`, {
+        query: queryText,
+        userAccessToken: token,
+      }, {
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      const queryInstanceId = startResponse.data.id;
+
+      // Poll for result
+      const pollForResult = async () => {
+        const maxAttempts = 60; // 5 minutes at 5s intervals
+        for (let i = 0; i < maxAttempts; i++) {
+          await new Promise(resolve => setTimeout(resolve, 5000));
+          const statusResponse = await axios.get(`${API_URL}/travel-planner/status/${queryInstanceId}`);
+          const status = statusResponse.data;
+
+          if (status.runtimeStatus === 'Completed') {
+            const output = status.output || {};
+            const result = output.result || output.error || 'No result returned.';
+            setMessages(prev => [...prev, { role: 'bot', content: result }]);
+            return;
+          } else if (status.runtimeStatus === 'Failed') {
+            setMessages(prev => [...prev, { role: 'bot', content: 'Error: Azure query failed. Please try again.' }]);
+            return;
+          }
+        }
+        setMessages(prev => [...prev, { role: 'bot', content: 'Azure query timed out. Please try again.' }]);
+      };
+
+      await pollForResult();
+    } catch (error) {
+      console.error('Error querying Azure resources:', error);
+      const msg = error.message?.includes('No authenticated account')
+        ? 'Please sign in to query Azure resources.'
+        : 'Error querying Azure resources. Please try again.';
+      setMessages(prev => [...prev, { role: 'bot', content: msg }]);
+    } finally {
+      setAzureQueryLoading(false);
+    }
+  };
+
   return (
     <div className="page-container">
       <div className="chat-title-container">
@@ -855,6 +938,27 @@ ${plan.bookingConfirmation.replace("Travel plan was not approved. Comments: ", "
               </button>
             </div>
           )}
+          
+          <div className="azure-query-section">
+            <h3>Ask about Azure Resources</h3>
+            <div className="azure-query-input-row">
+              <input
+                type="text"
+                value={azureQuery}
+                onChange={(e) => setAzureQuery(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && !azureQueryLoading && submitAzureQuery()}
+                placeholder="e.g., List all web apps in my subscription"
+                disabled={azureQueryLoading}
+              />
+              <button
+                onClick={submitAzureQuery}
+                disabled={azureQueryLoading || !azureQuery.trim()}
+                className="submit-btn"
+              >
+                {azureQueryLoading ? 'Querying...' : 'Ask'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

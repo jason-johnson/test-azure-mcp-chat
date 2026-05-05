@@ -481,3 +481,35 @@ h1 {
     margin-right: 10px;
   }
 }
+
+/* Azure Query Section */
+.azure-query-section {
+  padding: 16px 20px;
+  border-top: 1px solid rgba(0, 0, 0, 0.1);
+  background: rgba(255, 255, 255, 0.95);
+}
+
+.azure-query-section h3 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  color: #555;
+}
+
+.azure-query-input-row {
+  display: flex;
+  gap: 8px;
+}
+
+.azure-query-input-row input {
+  flex: 1;
+  padding: 10px 14px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.azure-query-input-row .submit-btn {
+  white-space: nowrap;
+  min-width: 80px;
+}
+}

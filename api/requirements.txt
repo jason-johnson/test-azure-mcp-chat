@@ -11,3 +11,7 @@ pydantic
 agent-framework-azurefunctions
 agent-framework-azure-ai
 agent-framework-durabletask>=0.0.2b260126
+
+# MCP client for Azure MCP Server
+mcp>=1.24.0,<2
+httpx

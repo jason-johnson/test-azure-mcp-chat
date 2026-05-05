@@ -29,6 +29,7 @@ from models import (
     TravelPlanResult,
 )
 from tools import convert_currency, get_exchange_rate
+from mcp_agent import run_mcp_query
 
 
 logger = logging.getLogger(__name__)
@@ -444,6 +445,23 @@ def book_trip(request: dict) -> dict:
         return {"status": "failed", "error": str(ex)}
 
 
+@app.activity_trigger(input_name="request")
+async def query_azure_resources(request: dict) -> dict:
+    """Query Azure resources via Azure MCP server on behalf of the user."""
+    try:
+        query = request.get("query", "")
+        user_token = request.get("user_access_token", "")
+
+        if not user_token:
+            return {"error": "No user access token provided", "result": ""}
+
+        result = await run_mcp_query(query, user_token)
+        return {"result": result}
+    except Exception as ex:
+        logging.error(f"Error in query_azure_resources: {ex}", exc_info=True)
+        return {"error": str(ex), "result": ""}
+
+
 # ================== Custom HTTP Endpoints ==================
 
 # The AgentFunctionApp automatically creates these HTTP endpoints for each agent:
@@ -562,3 +580,59 @@ async def approve_travel_plan(req: func.HttpRequest, client) -> func.HttpRespons
             status_code=500,
             mimetype="application/json"
         )
+
+
+@app.function_name(name="QueryAzureResources")
+@app.route(route="azure-query", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
+@app.durable_client_input(client_name="client")
+async def query_azure(req: func.HttpRequest, client) -> func.HttpResponse:
+    """
+    Query Azure resources via MCP server on behalf of the authenticated user.
+
+    Expects JSON body: { "query": "...", "userAccessToken": "..." }
+    The userAccessToken must have audience api://{MCP_SERVER_CLIENT_ID}/Mcp.Tools.ReadWrite.
+    """
+    try:
+        req_body = req.get_json()
+        query = req_body.get("query", "")
+        user_token = req_body.get("userAccessToken", "")
+
+        if not query:
+            return func.HttpResponse(
+                json.dumps({"error": "Missing 'query' in request body"}),
+                status_code=400,
+                mimetype="application/json",
+            )
+        if not user_token:
+            return func.HttpResponse(
+                json.dumps({"error": "Missing 'userAccessToken' in request body"}),
+                status_code=401,
+                mimetype="application/json",
+            )
+
+        # Start a simple orchestration that calls the MCP activity
+        instance_id = await client.start_new(
+            "azure_query_orchestration",
+            client_input={"query": query, "user_access_token": user_token},
+        )
+
+        return func.HttpResponse(
+            json.dumps({"id": instance_id}),
+            status_code=202,
+            mimetype="application/json",
+        )
+    except Exception as ex:
+        logging.error(f"Error in azure query: {ex}")
+        return func.HttpResponse(
+            json.dumps({"error": str(ex)}),
+            status_code=500,
+            mimetype="application/json",
+        )
+
+
+@app.orchestration_trigger(context_name="context")
+def azure_query_orchestration(context: df.DurableOrchestrationContext):
+    """Simple orchestration that runs an MCP query and returns the result."""
+    request = context.get_input()
+    result = yield context.call_activity("query_azure_resources", request)
+    return result
