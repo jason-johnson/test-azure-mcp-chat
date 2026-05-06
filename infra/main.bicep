@@ -135,6 +135,7 @@ var tokenExchangeAudience = environment().name == 'AzureUSGovernment'
     : 'api://AzureADTokenExchange'
 
 var mcpScopeId = guid(subscription().id, environmentName, 'Mcp.Tools.ReadWrite')
+var mcpAppRoleId = guid(subscription().id, environmentName, 'Mcp.Tools.ReadWrite.All')
 var mcpServerUniqueName = '${environmentName}-mcp-server'
 var mcpClientUniqueName = '${environmentName}-mcp-client'
 
@@ -176,6 +177,17 @@ resource mcpServerApp 'Microsoft.Graph/applications@v1.0' = {
       }
     ]
   }
+  // App role for managed identity auth (e.g. Foundry project MI)
+  appRoles: [
+    {
+      id: mcpAppRoleId
+      allowedMemberTypes: ['Application']
+      displayName: 'MCP Tools ReadWrite All'
+      description: 'Allow the application to access Azure MCP tools without a signed-in user.'
+      isEnabled: true
+      value: 'Mcp.Tools.ReadWrite.All'
+    }
+  ]
   requiredResourceAccess: [
     {
       // Azure Resource Manager API — user_impersonation for OBO
@@ -207,6 +219,13 @@ resource mcpServerSp 'Microsoft.Graph/servicePrincipals@v1.0' = {
   appId: mcpServerApp.appId
 }
 
+// Grant Foundry project MI the app role on the MCP server SP
+resource foundryMcpAppRoleAssignment 'Microsoft.Graph/appRoleAssignedTo@v1.0' = {
+  appRoleId: mcpAppRoleId
+  principalId: foundry.outputs.projectPrincipalId
+  resourceId: mcpServerSp.id
+}
+
 // Federated identity credential — passwordless OBO using managed identity
 resource mcpFederatedCredential 'Microsoft.Graph/applications/federatedIdentityCredentials@v1.0' = {
   name: '${mcpServerApp.uniqueName}/McpServerOboCredential'
@@ -218,17 +237,20 @@ resource mcpFederatedCredential 'Microsoft.Graph/applications/federatedIdentityC
   subject: mcpManagedIdentity.outputs.principalId
 }
 
-// Client App Registration — used by Foundry/Copilot Studio to authenticate
+// Client App Registration — used by Foundry Agent Service for OAuth identity passthrough
 resource mcpClientApp 'Microsoft.Graph/applications@v1.0' = {
   uniqueName: mcpClientUniqueName
   displayName: '${environmentName} MCP Client'
   signInAudience: 'AzureADMyOrg'
-  publicClient: {
+  web: {
     redirectUris: [
       'http://localhost'
     ]
+    implicitGrantSettings: {
+      enableIdTokenIssuance: false
+      enableAccessTokenIssuance: false
+    }
   }
-  isFallbackPublicClient: true
 }
 
 // Service principal for the client app

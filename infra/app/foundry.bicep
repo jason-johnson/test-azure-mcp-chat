@@ -75,3 +75,4 @@ output endpoint string = aiFoundry.properties.endpoint
 output projectName string = project.name
 output projectEndpoint string = '${aiFoundry.properties.endpoint}api/projects/${project.name}'
 output resourceId string = aiFoundry.id
+output projectPrincipalId string = project.identity.principalId
