@@ -1,3 +1,7 @@
 name: azure-mcp-chat
 metadata:
   template: azure-mcp-chat@0.0.1
+hooks:
+  postprovision:
+    shell: sh
+    run: scripts/create-agent.sh

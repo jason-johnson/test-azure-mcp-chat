@@ -287,3 +287,4 @@ output MCP_SERVER_URI string = 'https://${mcpApp.outputs.fqdn}'
 output MCP_SERVER_NAME string = mcpApp.outputs.name
 output MCP_SERVER_CLIENT_ID string = mcpServerApp.appId
 output MCP_CLIENT_CLIENT_ID string = mcpClientApp.appId
+output AZURE_TENANT_ID string = tenant().tenantId
