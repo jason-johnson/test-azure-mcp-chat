@@ -1,6 +1,6 @@
-name: travel-planner
+name: azure-support-assistant
 metadata:
-  template: travel-planner@0.0.1
+  template: azure-support-assistant@0.0.1
 services:
   api:
     project: ./api
