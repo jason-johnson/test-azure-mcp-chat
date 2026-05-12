@@ -64,6 +64,7 @@ async def run_azure_query(query: str, user_access_token: str) -> str:
         url=mcp_url,
         description="Query and inspect Azure resources on behalf of the authenticated user.",
         http_client=http_client,
+        load_prompts=False,
     )
 
     client = OpenAIChatClient(

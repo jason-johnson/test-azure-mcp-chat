@@ -181,6 +181,7 @@ async def run_ticket_query(query: str, user_access_token: Optional[str] = None) 
             url=freshdesk_mcp_url,
             description="Search and retrieve support tickets from Freshdesk.",
             http_client=http_client,
+            load_prompts=False,
         )
         agent = client.as_agent(
             name="TicketAgent",
