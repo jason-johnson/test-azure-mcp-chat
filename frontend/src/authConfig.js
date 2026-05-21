@@ -15,12 +15,10 @@ const msalConfig = {
 
 export const msalInstance = new PublicClientApplication(msalConfig);
 
-// Scope for Azure MCP server — the user's token will carry this audience
-const mcpServerClientId = process.env.REACT_APP_MCP_SERVER_CLIENT_ID || '';
-export const mcpScopes = mcpServerClientId
-  ? [`api://${mcpServerClientId}/Mcp.Tools.ReadWrite`]
-  : [];
+// ARM scope — the user's token grants access to Azure resources directly.
+// No custom MCP audience needed; azure-mcp runs as a stdio subprocess.
+export const armScopes = ['https://management.azure.com/user_impersonation'];
 
 export const loginRequest = {
-  scopes: mcpScopes,
+  scopes: armScopes,
 };

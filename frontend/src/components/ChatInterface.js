@@ -3,9 +3,9 @@ import axios from 'axios';
 import ReactMarkdown from 'react-markdown';
 import { useMsal } from '@azure/msal-react';
 import '../ChatInterface.css';
-import { mcpScopes } from '../authConfig';
+import { armScopes } from '../authConfig';
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:7071/api';
+const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000/api';
 
 const AGENT_MODES = {
   azure: { label: 'Azure Resources', endpoint: 'query/azure', icon: '☁️' },
@@ -28,33 +28,17 @@ const ChatInterface = () => {
     }
   }, [messages]);
 
-  const acquireMcpToken = async () => {
+  const acquireArmToken = async () => {
     const account = accounts[0];
     if (!account) throw new Error('No authenticated account');
 
     try {
-      const response = await instance.acquireTokenSilent({ scopes: mcpScopes, account });
+      const response = await instance.acquireTokenSilent({ scopes: armScopes, account });
       return response.accessToken;
     } catch {
-      const response = await instance.acquireTokenPopup({ scopes: mcpScopes, account });
+      const response = await instance.acquireTokenPopup({ scopes: armScopes, account });
       return response.accessToken;
     }
-  };
-
-  const pollForResult = async (instanceId) => {
-    const maxAttempts = 60;
-    for (let i = 0; i < maxAttempts; i++) {
-      await new Promise((r) => setTimeout(r, 3000));
-      const res = await axios.get(`${API_URL}/query/status/${instanceId}`);
-      const status = res.data;
-
-      if (status.runtimeStatus === 'Completed') {
-        return status.output;
-      } else if (status.runtimeStatus === 'Failed') {
-        throw new Error('Query failed');
-      }
-    }
-    throw new Error('Query timed out');
   };
 
   const formatOutput = (output, mode) => {
@@ -86,17 +70,16 @@ const ChatInterface = () => {
     setMessages((prev) => [...prev, { role: 'user', content: text }]);
 
     try {
-      const token = await acquireMcpToken();
+      const token = await acquireArmToken();
       const mode = AGENT_MODES[agentMode];
 
-      const startRes = await axios.post(
+      const res = await axios.post(
         `${API_URL}/${mode.endpoint}`,
         { query: text, userAccessToken: token },
         { headers: { 'Content-Type': 'application/json' } }
       );
 
-      const output = await pollForResult(startRes.data.id);
-      const formatted = formatOutput(output, agentMode);
+      const formatted = formatOutput(res.data, agentMode);
       setMessages((prev) => [...prev, { role: 'bot', content: formatted }]);
     } catch (error) {
       console.error('Query error:', error);
