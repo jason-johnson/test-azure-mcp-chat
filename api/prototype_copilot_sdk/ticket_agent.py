@@ -17,7 +17,7 @@ import logging
 from typing import Optional
 
 from pydantic import BaseModel, Field
-from copilot import CopilotClient, define_tool
+from copilot import CopilotClient, SubprocessConfig, define_tool
 from copilot.generated.session_events import (
     AssistantMessageData,
     SessionIdleData,
@@ -183,26 +183,40 @@ async def run_ticket_query(query: str) -> str:
     No user token needed — MCP servers run as stdio subprocesses
     authenticated via the container's managed identity.
     """
-    deployment_name = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o-mini")
+    deployment_name = os.getenv("COPILOT_MODEL", "gpt-5-mini")
     freshdesk_mcp_url = os.environ.get("FRESHDESK_MCP_URI")
+
+    from copilot.generated.session_events import SessionErrorData
 
     response_parts: list[str] = []
     done = asyncio.Event()
 
     def on_event(event):
         match event.data:
+            case SessionErrorData() as data:
+                logger.error(f"Session error: {data.error_type}: {data.message}")
+                response_parts.append(f"Error: {data.message}")
+                done.set()
             case AssistantMessageData() as data:
                 response_parts.append(data.content)
             case SessionIdleData():
                 done.set()
 
     try:
-        async with CopilotClient() as client:
+        config_kwargs = {}
+        gh_token = os.environ.get("GITHUB_TOKEN")
+        if gh_token:
+            config_kwargs["github_token"] = gh_token
+
+        async with CopilotClient(SubprocessConfig(**config_kwargs)) as client:
             session_kwargs = {
                 "model": deployment_name,
-                "provider": _get_azure_provider_config(),
                 "system_message": {"content": TICKET_AGENT_INSTRUCTIONS},
             }
+
+            # Only use Azure OpenAI provider if explicitly configured
+            if os.getenv("AZURE_OPENAI_ENDPOINT"):
+                session_kwargs["provider"] = _get_azure_provider_config()
 
             if freshdesk_mcp_url:
                 # MCP mode — CLI handles MCP connection via stdio

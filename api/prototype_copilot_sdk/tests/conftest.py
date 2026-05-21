@@ -13,8 +13,12 @@ import sys
 
 import pytest
 
-# Ensure the prototype package is importable
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+# Ensure the prototype package is importable (must be before api/ on sys.path
+# to avoid importing the old agent_framework-based modules)
+_proto_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
+if _proto_dir in sys.path:
+    sys.path.remove(_proto_dir)
+sys.path.insert(0, _proto_dir)
 
 
 # --------------- credential helpers ---------------
