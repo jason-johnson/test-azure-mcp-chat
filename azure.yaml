@@ -3,9 +3,11 @@ metadata:
   template: azure-support-assistant@0.0.1
 services:
   api:
-    project: ./api
+    project: ./api/prototype_copilot_sdk
     language: python
-    host: function
+    host: containerapp
+    docker:
+      path: ./Dockerfile
   web:
     project: ./frontend
     language: js
@@ -24,8 +26,7 @@ services:
             echo "Setting REACT_APP_API_URL to: ${API_URL}"
             # Update .env.production file
             echo "REACT_APP_API_URL=${API_URL}" > .env.production
-            echo "REACT_APP_MCP_CLIENT_ID=${MCP_CLIENT_CLIENT_ID}" >> .env.production
-            echo "REACT_APP_MCP_SERVER_CLIENT_ID=${MCP_SERVER_CLIENT_ID}" >> .env.production
+            echo "REACT_APP_MCP_CLIENT_ID=${CLIENT_APP_CLIENT_ID}" >> .env.production
             echo "REACT_APP_TENANT_ID=${AZURE_TENANT_ID}" >> .env.production
             cat .env.production
             # Export as environment variable for the build
@@ -44,8 +45,7 @@ services:
             Write-Host "Setting REACT_APP_API_URL to: $API_URL"
             # Update .env.production file
             "REACT_APP_API_URL=$API_URL" | Out-File -FilePath .env.production -Encoding utf8
-            "REACT_APP_MCP_CLIENT_ID=${MCP_CLIENT_CLIENT_ID}" | Out-File -FilePath .env.production -Append -Encoding utf8
-            "REACT_APP_MCP_SERVER_CLIENT_ID=${MCP_SERVER_CLIENT_ID}" | Out-File -FilePath .env.production -Append -Encoding utf8
+            "REACT_APP_MCP_CLIENT_ID=${CLIENT_APP_CLIENT_ID}" | Out-File -FilePath .env.production -Append -Encoding utf8
             "REACT_APP_TENANT_ID=${AZURE_TENANT_ID}" | Out-File -FilePath .env.production -Append -Encoding utf8
             Get-Content .env.production
             # Set as environment variable for the build

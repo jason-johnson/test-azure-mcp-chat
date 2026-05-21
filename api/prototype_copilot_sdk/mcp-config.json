@@ -1,9 +1,0 @@
-{
-  "mcpServers": {
-    "azure": {
-      "command": "/opt/azure-mcp/azure-mcp",
-      "args": ["--mode", "all", "--read-only"],
-      "env": {}
-    }
-  }
-}
