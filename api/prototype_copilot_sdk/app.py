@@ -42,6 +42,7 @@ import logging
 from typing import Optional
 
 from fastapi import FastAPI, Request, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -51,6 +52,15 @@ from ticket_agent import run_ticket_query
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Azure Support Assistant (Copilot SDK)")
+
+# CORS — allow the React frontend (local dev + production)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:3000").split(","),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # ================== Request/Response Models ==================

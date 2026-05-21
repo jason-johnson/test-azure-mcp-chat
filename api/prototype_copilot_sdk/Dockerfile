@@ -1,27 +1,22 @@
-# Prototype Dockerfile for Copilot SDK + stdio MCP architecture.
+# Dockerfile for Copilot SDK + stdio MCP architecture.
 #
 # Bundles:
 #   1. Python app (FastAPI + github-copilot-sdk)
-#   2. GitHub Copilot CLI (agent runtime)
+#   2. Copilot CLI (bundled with github-copilot-sdk pip package)
 #   3. Azure MCP server binary (stdio mode)
 #
-# The Copilot CLI spawns azure-mcp as a stdio subprocess.
+# The Copilot SDK spawns azure-mcp as a stdio subprocess.
 # Auth to ARM uses the container's managed identity (AZURE_CLIENT_ID).
 # No separate MCP Container App, no OBO, no app registrations for MCP.
 
-FROM python:3.11-slim
+FROM python:3.12-slim
 
-# Install azure-mcp binary
-# The Azure MCP server is a single .NET binary distributed via MCR
-# In production, pin to a specific tag instead of 'latest'
+# Copy azure-mcp binary from MCR (standalone .NET binary, no Node.js needed)
 COPY --from=mcr.microsoft.com/azure-sdk/azure-mcp:latest /app /opt/azure-mcp
-ENV AZURE_MCP_PATH=/opt/azure-mcp/azure-mcp
 
-# Install Copilot CLI
-# NOTE: Actual installation method TBD — may be npm package, binary download, etc.
-# RUN npm install -g @github/copilot-cli
-# For now, assume it's available at this path:
-ENV COPILOT_CLI_PATH=/usr/local/bin/copilot-cli
+# Point the agent at the binary instead of npx
+ENV AZURE_MCP_COMMAND=/opt/azure-mcp/azure-mcp
+ENV AZURE_MCP_ARGS="server start --mode all --read-only"
 
 # Install Python dependencies
 WORKDIR /app
@@ -29,11 +24,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
-COPY . .
-
-# Copilot CLI MCP server configuration
-# This tells the CLI to spawn azure-mcp in stdio mode
-COPY mcp-config.json /root/.copilot/mcp.json
+COPY app.py azure_agent.py ticket_agent.py ./
 
 EXPOSE 8000
 

@@ -3,34 +3,26 @@
 
   What changed vs the current main.bicep:
   ─────────────────────────────────────────
-  REMOVED (~180 lines):
-    - MCP Server Parameters (mcpImageTag, mcpServiceName, freshdeskMcpUri)
-    - mcpAppName variable
-    - mcpManagedIdentity module (OBO-specific MI)
-    - mcpServerApp resource (Server App Registration)
-    - mcpServerAppUpdate resource (identifierUris update)
-    - mcpServerSp resource (Server Service Principal)
-    - mcpFederatedCredential resource (FIC for OBO)
-    - mcpClientApp resource (Client App Registration)
-    - mcpClientAppUpdate resource (API permissions)
-    - mcpClientSp resource (Client Service Principal)
-    - mcpEnvironment module (Container Apps Environment)
-    - mcpApp module (MCP Container App via mcp.bicep)
-    - tokenExchangeAudience, mcpScopeId, mcpServerUniqueName, mcpClientUniqueName vars
-    - MCP_SERVER_URI, FRESHDESK_MCP_URI app settings
-    - MCP_SERVER_URI, MCP_SERVER_NAME, MCP_SERVER_CLIENT_ID, MCP_CLIENT_CLIENT_ID outputs
+  REMOVED:
+    - Function App + App Service Plan (Flex Consumption)
+    - Durable Task Scheduler + Task Hub + DTS roles
+    - All MCP Container App / App Registration / OBO resources
+    - Deployment storage container (Azure Functions packaging)
 
-  ADDED:
-    - Client App Registration for user sign-in (SPA MSAL — much simpler, no API scopes)
-    - ARM user_impersonation permission on the client app (so users can get ARM tokens)
-    - CLIENT_APP_CLIENT_ID output (for MSAL in the frontend)
+  REPLACED WITH:
+    - Container Apps Environment + Container App (FastAPI + Copilot SDK)
+    - Azure Container Registry (for Docker image)
 
-  The infra/app/mcp.bicep file is NO LONGER NEEDED and can be deleted.
+  KEPT:
+    - Static Web App (React frontend)
+    - User-assigned Managed Identity (for ARM, AI Services, storage)
+    - Storage Account (for app data if needed)
+    - AI Services / Azure OpenAI (optional — can use GitHub Copilot backend instead)
+    - Log Analytics + Application Insights
+    - VNet + Private Endpoint (optional)
+    - Client App Registration (SPA MSAL, ARM user_impersonation scope)
 
-  NOTE: This prototype keeps the existing Function App / Durable Task infrastructure.
-  A full migration to Copilot SDK would also replace those with a Container App
-  running FastAPI + Copilot CLI + azure-mcp (see prototype_copilot_sdk/Dockerfile).
-  That's a separate infrastructure change not shown here.
+  The infra/app/mcp.bicep and infra/app/dts.bicep are NO LONGER NEEDED.
 */
 targetScope = 'subscription'
 
@@ -53,7 +45,7 @@ param location string
 @description('Skip the creation of the virtual network and private endpoint')
 param skipVnet bool = true
 
-@description('Name of the API service')
+@description('Name of the API service (Container App)')
 param apiServiceName string = ''
 
 @description('Name of the user assigned identity')
@@ -62,8 +54,11 @@ param apiUserAssignedIdentityName string = ''
 @description('Name of the application insights resource')
 param applicationInsightsName string = ''
 
-@description('Name of the app service plan')
-param appServicePlanName string = ''
+@description('Name of the container registry')
+param containerRegistryName string = ''
+
+@description('Name of the Container Apps Environment')
+param containerAppsEnvironmentName string = ''
 
 @description('Name of the log analytics workspace')
 param logAnalyticsName string = ''
@@ -79,15 +74,6 @@ param vNetName string = ''
 
 @description('Disable local authentication for Azure Monitor')
 param disableLocalAuth bool = true
-
-@description('Name of the Durable Task Scheduler')
-param dtsName string = ''
-
-@description('Name of the task hub')
-param taskHubName string = ''
-
-@description('Durable Task Scheduler SKU name')
-param dtsSkuName string = 'Consumption'
 
 @description('Name of the web service')
 param webServiceName string = ''
@@ -128,11 +114,9 @@ var abbrs = loadJsonContent('./abbreviations.json')
 var resourceToken = toLower(uniqueString(subscription().id, rg.id, environmentName, location))
 var aiResourceToken = toLower(uniqueString(subscription().id, rg.id, environmentName, modelLocation))
 var tags = { 'azd-env-name': environmentName }
-var functionAppName = !empty(apiServiceName) ? apiServiceName : '${abbrs.webSitesFunctions}api-${resourceToken}'
-var deploymentStorageContainerName = 'app-package-${take(functionAppName, 32)}-${take(toLower(uniqueString(functionAppName, resourceToken)), 7)}'
+var apiAppName = !empty(apiServiceName) ? apiServiceName : '${abbrs.appContainerApps}api-${resourceToken}'
 var webAppName = !empty(webServiceName) ? webServiceName : '${abbrs.webStaticSites}web-${resourceToken}'
 var webUri = 'https://${webAppName}.azurestaticapps.net'
-// NOTE: mcpAppName variable REMOVED — no MCP Container App
 
 // Organize resources in a resource group
 resource rg 'Microsoft.Resources/resourceGroups@2025-04-01' = {
@@ -178,11 +162,6 @@ module storage 'br/public:avm/res/storage/storage-account:0.29.0' = {
     kind: 'StorageV2'
     skuName: 'Standard_LRS'
     allowSharedKeyAccess: false
-    blobServices: {
-      containers: [
-        { name: deploymentStorageContainerName }
-      ]
-    }
     publicNetworkAccess: skipVnet ? 'Enabled' : 'Disabled'
     networkAcls: skipVnet ? {
         defaultAction: 'Allow'
@@ -236,82 +215,80 @@ module storage 'br/public:avm/res/storage/storage-account:0.29.0' = {
   }
 }
 
-// App Service Plan using AVM - Flex Consumption
-module appServicePlan 'br/public:avm/res/web/serverfarm:0.5.0' = {
-  name: 'appserviceplan-${resourceToken}'
+// Container Registry using AVM
+module acr 'br/public:avm/res/container-registry/registry:0.9.1' = {
+  name: 'acr-${resourceToken}'
   scope: rg
   params: {
-    name: !empty(appServicePlanName) ? appServicePlanName : '${abbrs.webServerFarms}${resourceToken}'
+    name: !empty(containerRegistryName) ? containerRegistryName : '${abbrs.containerRegistryRegistries}${resourceToken}'
     location: location
     tags: tags
-    skuName: 'FC1' // Flex Consumption
-    reserved: true
+    acrSku: 'Basic'
+    acrAdminUserEnabled: false
+    roleAssignments: [
+      {
+        principalId: apiUserAssignedIdentity.outputs.principalId
+        roleDefinitionIdOrName: '7f951dda-4ed3-4680-a7ca-43fe172d538d' // AcrPull
+        principalType: 'ServicePrincipal'
+      }
+    ]
   }
 }
 
-// Function App using AVM - Flex Consumption (Python)
-module api 'br/public:avm/res/web/site:0.19.3' = {
+// Container Apps Environment using AVM
+module containerAppsEnv 'br/public:avm/res/app/managed-environment:0.8.1' = {
+  name: 'cae-${resourceToken}'
+  scope: rg
+  params: {
+    name: !empty(containerAppsEnvironmentName) ? containerAppsEnvironmentName : '${abbrs.appManagedEnvironments}${resourceToken}'
+    location: location
+    tags: tags
+    logAnalyticsWorkspaceResourceId: logAnalytics.outputs.resourceId
+    zoneRedundant: false
+  }
+}
+
+// Container App — FastAPI + Copilot SDK + azure-mcp (stdio)
+module api 'br/public:avm/res/app/container-app:0.12.0' = {
   name: 'api-${resourceToken}'
   scope: rg
   params: {
-    name: functionAppName
+    name: apiAppName
     location: location
     tags: union(tags, { 'azd-service-name': 'api' })
-    kind: 'functionapp,linux'
-    serverFarmResourceId: appServicePlan.outputs.resourceId
+    environmentResourceId: containerAppsEnv.outputs.resourceId
     managedIdentities: {
       userAssignedResourceIds: [apiUserAssignedIdentity.outputs.resourceId]
     }
-    functionAppConfig: {
-      deployment: {
-        storage: {
-          type: 'blobContainer'
-          value: 'https://${storage.outputs.name}.blob.${environment().suffixes.storage}/${deploymentStorageContainerName}'
-          authentication: {
-            type: 'UserAssignedIdentity'
-            userAssignedIdentityResourceId: apiUserAssignedIdentity.outputs.resourceId
-          }
-        }
-      }
-      scaleAndConcurrency: {
-        instanceMemoryMB: 2048
-        maximumInstanceCount: 100
-      }
-      runtime: {
-        name: 'python'
-        version: '3.11'
-      }
-    }
-    virtualNetworkSubnetResourceId: skipVnet ? '' : '${serviceVirtualNetwork!.outputs.resourceId}/subnets/app-subnet'
-    diagnosticSettings: [
+    registries: [
       {
-        workspaceResourceId: logAnalytics.outputs.resourceId
+        server: acr.outputs.loginServer
+        identity: apiUserAssignedIdentity.outputs.resourceId
       }
     ]
-    siteConfig: {
-      alwaysOn: false
-      cors: {
-        allowedOrigins: [ webUri, 'https://${webapp.outputs.defaultHostname}' ]
+    containers: [
+      {
+        name: 'api'
+        image: '${acr.outputs.loginServer}/${apiAppName}:latest'
+        resources: {
+          cpu: '1.0'
+          memory: '2Gi'
+        }
+        env: [
+          { name: 'AZURE_CLIENT_ID', value: apiUserAssignedIdentity.outputs.clientId }
+          { name: 'COPILOT_MODEL', value: 'gpt-5-mini' }
+          { name: 'CORS_ORIGINS', value: '${webUri},https://${webapp.outputs.defaultHostname}' }
+          { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: monitoring.outputs.connectionString }
+          // GITHUB_TOKEN should be set via Key Vault reference or manual config
+          // AZURE_OPENAI_ENDPOINT is optional — only if using Azure OpenAI instead of GitHub Copilot
+        ]
       }
-      appSettings: [
-        { name: 'AzureWebJobsStorage__credential', value: 'managedidentity' }
-        { name: 'AzureWebJobsStorage__clientId', value: apiUserAssignedIdentity.outputs.clientId }
-        { name: 'AzureWebJobsStorage__blobServiceUri', value: 'https://${storage.outputs.name}.blob.${environment().suffixes.storage}' }
-        { name: 'AzureWebJobsStorage__queueServiceUri', value: 'https://${storage.outputs.name}.queue.${environment().suffixes.storage}' }
-        { name: 'AzureWebJobsStorage__tableServiceUri', value: 'https://${storage.outputs.name}.table.${environment().suffixes.storage}' }
-        { name: 'AzureWebJobsStorage__accountName', value: storage.outputs.name }
-        { name: 'DURABLE_TASK_SCHEDULER_CONNECTION_STRING', value: 'Endpoint=${dts.outputs.dts_URL};Authentication=ManagedIdentity;ClientID=${apiUserAssignedIdentity.outputs.clientId}' }
-        { name: 'TASKHUB_NAME', value: dts.outputs.TASKHUB_NAME }
-        { name: 'AZURE_OPENAI_ENDPOINT', value: aiServiceExists ? reference(aiServiceAccountResourceId, '2023-05-01').endpoint : aiServices!.outputs.endpoint }
-        { name: 'AZURE_OPENAI_DEPLOYMENT_NAME', value: modelName }
-        { name: 'AZURE_CLIENT_ID', value: apiUserAssignedIdentity.outputs.clientId }
-        { name: 'APPLICATIONINSIGHTS_AUTHENTICATION_STRING', value: 'ClientId=${apiUserAssignedIdentity.outputs.clientId};Authorization=AAD' }
-        { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: monitoring.outputs.connectionString }
-        // NOTE: MCP_SERVER_URI and FRESHDESK_MCP_URI REMOVED
-        // MCP servers run as local stdio subprocesses, not remote HTTP endpoints.
-        // azure-mcp uses AZURE_CLIENT_ID (above) for MI auth when no user token is provided.
-      ]
-    }
+    ]
+    ingressTargetPort: 8000
+    ingressExternal: true
+    ingressTransport: 'auto'
+    scaleMinReplicas: 1
+    scaleMaxReplicas: 5
   }
 }
 
@@ -484,46 +461,6 @@ module monitoring 'br/public:avm/res/insights/component:0.7.1' = {
   }
 }
 
-var durableTaskDataContributorRoleDefinitionId = '0ad04412-c4d5-4796-b79c-f76d14c8d402'
-
-module dtsRoleApi 'br/public:avm/ptn/authorization/resource-role-assignment:0.1.2' = {
-  scope: rg
-  name: 'dtsRoleApi-${resourceToken}'
-  params: {
-    principalId: apiUserAssignedIdentity.outputs.principalId
-    roleDefinitionId: durableTaskDataContributorRoleDefinitionId
-    principalType: 'ServicePrincipal'
-    resourceId: dts.outputs.dts_ID
-  }
-}
-
-module dtsRoleUser 'br/public:avm/ptn/authorization/resource-role-assignment:0.1.2' = {
-  scope: rg
-  name: 'dtsRoleUser-${resourceToken}'
-  params: {
-    principalId: principalId
-    roleDefinitionId: durableTaskDataContributorRoleDefinitionId
-    principalType: 'User'
-    resourceId: dts.outputs.dts_ID
-  }
-}
-
-// Durable Task Scheduler doesn't have AVM support yet
-module dts './app/dts.bicep' = {
-  scope: rg
-  name: 'dtsResource-${resourceToken}'
-  params: {
-    name: !empty(dtsName) ? dtsName : '${abbrs.dts}${resourceToken}'
-    taskhubname: !empty(taskHubName) ? taskHubName : '${abbrs.taskhub}${resourceToken}'
-    location: location
-    tags: tags
-    ipAllowlist: [
-      '0.0.0.0/0'
-    ]
-    skuName: dtsSkuName
-  }
-}
-
 // ============= Client App Registration (simplified) =============
 // Only need a single app registration for user sign-in (SPA + MSAL).
 // No server app reg, no custom scopes, no FIC, no OBO.
@@ -572,15 +509,13 @@ resource clientSp 'Microsoft.Graph/servicePrincipals@v1.0' = {
 output APPLICATIONINSIGHTS_CONNECTION_STRING string = monitoring.outputs.connectionString
 output AZURE_LOCATION string = location
 output SERVICE_API_NAME string = api.outputs.name
-output SERVICE_API_URI string = 'https://${api.outputs.defaultHostname}'
-output AZURE_FUNCTION_APP_NAME string = api.outputs.name
+output SERVICE_API_URI string = 'https://${api.outputs.fqdn}'
+output CONTAINER_REGISTRY_NAME string = acr.outputs.name
+output CONTAINER_REGISTRY_LOGIN_SERVER string = acr.outputs.loginServer
 output STATIC_WEB_APP_NAME string = webapp.outputs.name
 output STATIC_WEB_APP_URI string = 'https://${webapp.outputs.defaultHostname}'
-output PRE_STATIC_WEB_APP_URI string = webAppName
 output RESOURCE_GROUP string = rg.name
-output STORAGE_CONNECTION__queueServiceUri string = 'https://${storage.outputs.name}.queue.${environment().suffixes.storage}'
 output AZURE_OPENAI_ENDPOINT string = aiServiceExists ? reference(aiServiceAccountResourceId, '2023-05-01').endpoint : aiServices!.outputs.endpoint
 output AZURE_OPENAI_DEPLOYMENT_NAME string = modelName
-// NOTE: MCP_SERVER_URI, MCP_SERVER_NAME, MCP_SERVER_CLIENT_ID, MCP_CLIENT_CLIENT_ID outputs REMOVED
 output CLIENT_APP_CLIENT_ID string = clientApp.appId  // For MSAL in the frontend
 output AZURE_TENANT_ID string = tenant().tenantId
