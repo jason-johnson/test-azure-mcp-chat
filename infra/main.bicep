@@ -60,6 +60,9 @@ param containerRegistryName string = ''
 @description('Name of the Container Apps Environment')
 param containerAppsEnvironmentName string = ''
 
+@description('Container image name for the API service. Set by azd after build+push.')
+param apiImageName string = ''
+
 @description('Name of the log analytics workspace')
 param logAnalyticsName string = ''
 
@@ -269,7 +272,7 @@ module api 'br/public:avm/res/app/container-app:0.12.0' = {
     containers: [
       {
         name: 'api'
-        image: '${acr.outputs.loginServer}/${apiAppName}:latest'
+        image: !empty(apiImageName) ? apiImageName : 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
         resources: {
           cpu: '1.0'
           memory: '2Gi'
