@@ -7,7 +7,8 @@ services:
     language: python
     host: containerapp
     docker:
-      path: ./Dockerfile
+      path: ./api/prototype_copilot_sdk/Dockerfile
+      context: .
   web:
     project: ./frontend
     language: js

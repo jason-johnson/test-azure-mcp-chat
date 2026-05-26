@@ -43,7 +43,8 @@ from typing import Optional
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from azure_agent import run_azure_query, run_azure_query_streaming
@@ -203,3 +204,18 @@ async def ticket_created_webhook(req: WebhookRequest):
 async def health():
     """Health check endpoint."""
     return {"status": "healthy", "framework": "github-copilot-sdk"}
+
+
+# ================== Static Frontend (served last, catch-all for SPA) ==================
+
+_static_dir = os.path.join(os.path.dirname(__file__), "static")
+if os.path.isdir(_static_dir):
+    app.mount("/static", StaticFiles(directory=_static_dir + "/static"), name="assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_spa(full_path: str):
+        """Serve the React SPA for any non-API route."""
+        file_path = os.path.join(_static_dir, full_path)
+        if os.path.isfile(file_path):
+            return FileResponse(file_path)
+        return FileResponse(os.path.join(_static_dir, "index.html"))

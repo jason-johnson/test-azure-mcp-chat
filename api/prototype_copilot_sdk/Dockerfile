@@ -1,14 +1,28 @@
 # Dockerfile for Copilot SDK + stdio MCP architecture.
 #
 # Bundles:
-#   1. Python app (FastAPI + github-copilot-sdk)
-#   2. Copilot CLI (bundled with github-copilot-sdk pip package)
-#   3. Azure MCP server binary (stdio mode)
+#   1. React frontend (built as static files, served by FastAPI)
+#   2. Python app (FastAPI + github-copilot-sdk)
+#   3. Copilot CLI (bundled with github-copilot-sdk pip package)
+#   4. Azure MCP server binary (stdio mode)
 #
+# Single container/pod: FastAPI serves both the API (/api/*) and the React SPA (/).
 # The Copilot SDK spawns azure-mcp as a stdio subprocess.
 # Auth to ARM uses the container's managed identity (AZURE_CLIENT_ID).
-# No separate MCP Container App, no OBO, no app registrations for MCP.
 
+# ── Stage 1: Build React frontend ─────────────────────────────────────────────
+FROM node:20-slim AS frontend-build
+
+WORKDIR /frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci --quiet
+
+# API calls are relative (/api/...) since frontend is served from the same origin
+ENV REACT_APP_API_URL=/api
+COPY frontend/ ./
+RUN npm run build
+
+# ── Stage 2: Python runtime ───────────────────────────────────────────────────
 FROM python:3.12-slim
 
 # Copy azure-mcp binary from MCR (standalone .NET binary, no Node.js needed)
@@ -20,11 +34,14 @@ ENV AZURE_MCP_ARGS="server start --mode all --read-only"
 
 # Install Python dependencies
 WORKDIR /app
-COPY requirements.txt .
+COPY api/prototype_copilot_sdk/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
-COPY app.py azure_agent.py ticket_agent.py ./
+COPY api/prototype_copilot_sdk/app.py api/prototype_copilot_sdk/azure_agent.py api/prototype_copilot_sdk/ticket_agent.py ./
+
+# Copy built React app so FastAPI can serve it as static files
+COPY --from=frontend-build /frontend/build ./static
 
 EXPOSE 8000
 
