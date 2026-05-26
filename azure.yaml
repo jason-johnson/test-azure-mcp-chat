@@ -9,3 +9,4 @@ services:
     docker:
       path: ./api/prototype_copilot_sdk/Dockerfile
       context: .
+      remoteBuild: true
