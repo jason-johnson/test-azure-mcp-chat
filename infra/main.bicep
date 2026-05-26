@@ -14,7 +14,6 @@
     - Azure Container Registry (for Docker image)
 
   KEPT:
-    - Static Web App (React frontend)
     - User-assigned Managed Identity (for ARM, AI Services, storage)
     - Storage Account (for app data if needed)
     - AI Services / Azure OpenAI (optional — can use GitHub Copilot backend instead)
@@ -78,9 +77,6 @@ param vNetName string = ''
 @description('Disable local authentication for Azure Monitor')
 param disableLocalAuth bool = true
 
-@description('Name of the web service')
-param webServiceName string = ''
-
 @description('Id of the user or app to assign application roles')
 param principalId string = deployer().objectId
 
@@ -118,29 +114,12 @@ var resourceToken = toLower(uniqueString(subscription().id, rg.id, environmentNa
 var aiResourceToken = toLower(uniqueString(subscription().id, rg.id, environmentName, modelLocation))
 var tags = { 'azd-env-name': environmentName }
 var apiAppName = !empty(apiServiceName) ? apiServiceName : '${abbrs.appContainerApps}api-${resourceToken}'
-var webAppName = !empty(webServiceName) ? webServiceName : '${abbrs.webStaticSites}web-${resourceToken}'
-var webUri = 'https://${webAppName}.azurestaticapps.net'
 
 // Organize resources in a resource group
 resource rg 'Microsoft.Resources/resourceGroups@2025-04-01' = {
   name: !empty(resourceGroupName) ? resourceGroupName : '${abbrs.resourcesResourceGroups}${environmentName}'
   location: location
   tags: tags
-}
-
-// The application frontend webapp using AVM
-module webapp 'br/public:avm/res/web/static-site:0.9.3' = {
-  name: 'webapp-${resourceToken}'
-  scope: rg
-  params: {
-    name: webAppName
-    location: 'westus2'
-    tags: union(tags, { 'azd-service-name': 'web' })
-    sku: 'Standard'
-    managedIdentities: {
-      userAssignedResourceIds: [apiUserAssignedIdentity.outputs.resourceId]
-    }
-  }
 }
 
 // User assigned managed identity using AVM
@@ -280,7 +259,6 @@ module api 'br/public:avm/res/app/container-app:0.12.0' = {
         env: [
           { name: 'AZURE_CLIENT_ID', value: apiUserAssignedIdentity.outputs.clientId }
           { name: 'COPILOT_MODEL', value: 'gpt-5-mini' }
-          { name: 'CORS_ORIGINS', value: '${webUri},https://${webapp.outputs.defaultHostname}' }
           { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: monitoring.outputs.connectionString }
           // GITHUB_TOKEN should be set via Key Vault reference or manual config
           // AZURE_OPENAI_ENDPOINT is optional — only if using Azure OpenAI instead of GitHub Copilot
@@ -478,8 +456,7 @@ resource clientApp 'Microsoft.Graph/applications@v1.0' = {
   spa: {
     redirectUris: [
       'http://localhost:3000'
-      webUri
-      'https://${webapp.outputs.defaultHostname}'
+      'https://${api.outputs.fqdn}'
     ]
   }
   publicClient: {
@@ -515,8 +492,6 @@ output SERVICE_API_NAME string = api.outputs.name
 output SERVICE_API_URI string = 'https://${api.outputs.fqdn}'
 output CONTAINER_REGISTRY_NAME string = acr.outputs.name
 output CONTAINER_REGISTRY_LOGIN_SERVER string = acr.outputs.loginServer
-output STATIC_WEB_APP_NAME string = webapp.outputs.name
-output STATIC_WEB_APP_URI string = 'https://${webapp.outputs.defaultHostname}'
 output RESOURCE_GROUP string = rg.name
 output AZURE_OPENAI_ENDPOINT string = aiServiceExists ? reference(aiServiceAccountResourceId, '2023-05-01').endpoint : aiServices!.outputs.endpoint
 output AZURE_OPENAI_DEPLOYMENT_NAME string = modelName
