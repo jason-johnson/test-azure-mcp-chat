@@ -7,6 +7,9 @@ services:
     language: python
     host: containerapp
     docker:
-      path: ./api/prototype_copilot_sdk/Dockerfile
-      context: .
+      path: ./Dockerfile
+      context: ../..
       remoteBuild: true
+      buildArgs:
+        - REACT_APP_MCP_CLIENT_ID=${CLIENT_APP_CLIENT_ID}
+        - REACT_APP_TENANT_ID=${AZURE_TENANT_ID}

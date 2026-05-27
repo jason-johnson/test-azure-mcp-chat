@@ -97,7 +97,9 @@ async def azure_query(req: QueryRequest):
         raise HTTPException(status_code=400, detail="Missing 'query'")
 
     try:
+        logger.info(f"Azure query received: {req.query[:50]}... | Token provided: {bool(req.userAccessToken)}")
         result = await run_azure_query(req.query, req.userAccessToken)
+        logger.info(f"Azure query result length: {len(result) if result else 0}")
         return QueryResponse(result=result)
     except Exception as ex:
         logger.error(f"Azure query error: {ex}", exc_info=True)
@@ -204,6 +206,222 @@ async def ticket_created_webhook(req: WebhookRequest):
 async def health():
     """Health check endpoint."""
     return {"status": "healthy", "framework": "github-copilot-sdk"}
+<<<<<<< Updated upstream
+=======
+
+
+@app.get("/api/debug/env")
+async def debug_env():
+    """Show environment configuration."""
+    return {
+        "azure_client_id": os.getenv("AZURE_CLIENT_ID", "not set"),
+        "copilot_model": os.getenv("COPILOT_MODEL", "not set"),
+        "azure_openai_endpoint": os.getenv("AZURE_OPENAI_ENDPOINT", "not set"),
+        "azure_openai_deployment": os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "not set"),
+        "azure_mcp_command": os.getenv("AZURE_MCP_COMMAND", "npx"),
+        "azure_mcp_args": os.getenv("AZURE_MCP_ARGS", "-y @azure/mcp server start --mode all --read-only"),
+        "node_available": os.path.exists("/usr/local/bin/node"),
+        "npx_available": os.path.exists("/usr/local/bin/npx"),
+    }
+
+
+@app.get("/api/debug/test-mcp")
+async def test_mcp():
+    """Test MCP subprocess startup."""
+    import subprocess
+    try:
+        # Test if npx can run
+        result = subprocess.run(
+            ["npx", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        npx_version = result.stdout.strip() if result.returncode == 0 else f"failed: {result.stderr}"
+        
+        # Test if we can spawn the MCP server
+        mcp_test = subprocess.run(
+            ["npx", "-y", "@azure/mcp", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        mcp_version = mcp_test.stdout.strip() if mcp_test.returncode == 0 else f"failed: {mcp_test.stderr}"
+        
+        return {
+            "npx_version": npx_version,
+            "mcp_version": mcp_version,
+            "mcp_command_works": mcp_test.returncode == 0
+        }
+    except Exception as ex:
+        return {"error": str(ex), "type": type(ex).__name__}
+
+
+@app.get("/api/debug/test-session")
+async def test_session():
+    """Test Copilot SDK session creation with MCP."""
+    try:
+        from azure_agent import _get_mcp_server_config, _get_copilot_config
+        from copilot import CopilotClient
+        
+        result = {}
+        
+        # Try to create a session with MCP
+        async with CopilotClient(_get_copilot_config()) as client:
+            result["client_created"] = True
+            
+            mcp_config = _get_mcp_server_config(None)  # Test with MI
+            result["mcp_config"] = mcp_config
+            
+            try:
+                async with await client.create_session(
+                    model=os.getenv("COPILOT_MODEL", "gpt-4o"),
+                    mcp_servers={"azure": mcp_config}
+                ) as session:
+                    result["session_created"] = True
+                    
+                    # Give MCP time to start
+                    await asyncio.sleep(3)
+                    
+                    # Try to send a simple query
+                    response_parts = []
+                    done = asyncio.Event()
+                    
+                    def on_event(event):
+                        from copilot.generated.session_events import (
+                            AssistantMessageData,
+                            SessionIdleData,
+                            SessionErrorData,
+                        )
+                        match event.data:
+                            case AssistantMessageData() as data:
+                                response_parts.append(data.content)
+                            case SessionIdleData():
+                                done.set()
+                            case SessionErrorData() as data:
+                                response_parts.append(f"ERROR: {data.message}")
+                                done.set()
+                    
+                    session.on(on_event)
+                    await session.send("What is 2+2?")
+                    await asyncio.wait_for(done.wait(), timeout=30)
+                    
+                    result["test_response"] = "".join(response_parts)
+            except Exception as session_ex:
+                result["session_error"] = str(session_ex)
+                result["session_error_type"] = type(session_ex).__name__
+                
+        return result
+    except Exception as ex:
+        logger.error(f"Session test failed: {ex}", exc_info=True)
+        return {"error": str(ex), "type": type(ex).__name__}
+
+
+@app.get("/api/debug/env")
+async def debug_env():
+    """Show environment configuration."""
+    return {
+        "azure_client_id": os.getenv("AZURE_CLIENT_ID", "not set"),
+        "copilot_model": os.getenv("COPILOT_MODEL", "not set"),
+        "azure_openai_endpoint": os.getenv("AZURE_OPENAI_ENDPOINT", "not set"),
+        "azure_openai_deployment": os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "not set"),
+        "azure_mcp_command": os.getenv("AZURE_MCP_COMMAND", "npx"),
+        "azure_mcp_args": os.getenv("AZURE_MCP_ARGS", "-y @azure/mcp server start --mode all --read-only"),
+        "node_available": os.path.exists("/usr/local/bin/node"),
+        "npx_available": os.path.exists("/usr/local/bin/npx"),
+    }
+
+
+@app.get("/api/debug/test-mcp")
+async def test_mcp():
+    """Test MCP subprocess startup."""
+    import subprocess
+    try:
+        # Test if npx can run
+        result = subprocess.run(
+            ["npx", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        npx_version = result.stdout.strip() if result.returncode == 0 else f"failed: {result.stderr}"
+        
+        # Test if we can spawn the MCP server
+        mcp_test = subprocess.run(
+            ["npx", "-y", "@azure/mcp", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        mcp_version = mcp_test.stdout.strip() if mcp_test.returncode == 0 else f"failed: {mcp_test.stderr}"
+        
+        return {
+            "npx_version": npx_version,
+            "mcp_version": mcp_version,
+            "mcp_command_works": mcp_test.returncode == 0
+        }
+    except Exception as ex:
+        return {"error": str(ex), "type": type(ex).__name__}
+
+
+@app.get("/api/debug/test-session")
+async def test_session():
+    """Test Copilot SDK session creation with MCP."""
+    try:
+        from azure_agent import _get_mcp_server_config, _get_copilot_config
+        from copilot import CopilotClient
+        
+        result = {}
+        
+        # Try to create a session with MCP
+        async with CopilotClient(_get_copilot_config()) as client:
+            result["client_created"] = True
+            
+            mcp_config = _get_mcp_server_config(None)  # Test with MI
+            result["mcp_config"] = mcp_config
+            
+            try:
+                async with await client.create_session(
+                    model=os.getenv("COPILOT_MODEL", "gpt-4o"),
+                    mcp_servers={"azure": mcp_config}
+                ) as session:
+                    result["session_created"] = True
+                    
+                    # Give MCP time to start
+                    await asyncio.sleep(3)
+                    
+                    # Try to send a simple query
+                    response_parts = []
+                    done = asyncio.Event()
+                    
+                    def on_event(event):
+                        from copilot.generated.session_events import (
+                            AssistantMessageData,
+                            SessionIdleData,
+                            SessionErrorData,
+                        )
+                        match event.data:
+                            case AssistantMessageData() as data:
+                                response_parts.append(data.content)
+                            case SessionIdleData():
+                                done.set()
+                            case SessionErrorData() as data:
+                                response_parts.append(f"ERROR: {data.message}")
+                                done.set()
+                    
+                    session.on(on_event)
+                    await session.send("What is 2+2?")
+                    await asyncio.wait_for(done.wait(), timeout=30)
+                    
+                    result["test_response"] = "".join(response_parts)
+            except Exception as session_ex:
+                result["session_error"] = str(session_ex)
+                result["session_error_type"] = type(session_ex).__name__
+                
+        return result
+    except Exception as ex:
+        logger.error(f"Session test failed: {ex}", exc_info=True)
+        return {"error": str(ex), "type": type(ex).__name__}
 
 
 # ================== Static Frontend (served last, catch-all for SPA) ==================
@@ -219,3 +437,4 @@ if os.path.isdir(_static_dir):
         if os.path.isfile(file_path):
             return FileResponse(file_path)
         return FileResponse(os.path.join(_static_dir, "index.html"))
+>>>>>>> Stashed changes

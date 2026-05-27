@@ -17,20 +17,20 @@ WORKDIR /frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --quiet
 
-# API calls are relative (/api/...) since frontend is served from the same origin
+# Injected by azd at build time via buildArgs
+ARG REACT_APP_MCP_CLIENT_ID
+ARG REACT_APP_TENANT_ID
 ENV REACT_APP_API_URL=/api
+ENV REACT_APP_MCP_CLIENT_ID=$REACT_APP_MCP_CLIENT_ID
+ENV REACT_APP_TENANT_ID=$REACT_APP_TENANT_ID
 COPY frontend/ ./
 RUN npm run build
 
 # ── Stage 2: Python runtime ───────────────────────────────────────────────────
 FROM python:3.12-slim
 
-# Copy azure-mcp binary from MCR (standalone .NET binary, no Node.js needed)
-COPY --from=mcr.microsoft.com/azure-sdk/azure-mcp:latest /app /opt/azure-mcp
-
-# Point the agent at the binary instead of npx
-ENV AZURE_MCP_COMMAND=/opt/azure-mcp/azure-mcp
-ENV AZURE_MCP_ARGS="server start --mode all --read-only"
+# Copy entire Node.js installation from the frontend build stage
+COPY --from=frontend-build /usr/local /usr/local
 
 # Install Python dependencies
 WORKDIR /app

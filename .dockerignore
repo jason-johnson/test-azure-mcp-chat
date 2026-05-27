@@ -1,0 +1,28 @@
+# Python
+.venv
+**/__pycache__
+**/*.pyc
+**/*.pyo
+api/**/.pytest_cache
+api/**/tests
+
+# Node
+frontend/node_modules
+frontend/build
+
+# Git / IDE
+.git
+.github
+.vscode
+.devcontainer
+
+# azd / infra
+.azure
+infra
+ado-pipelines
+
+# Misc
+*.md
+local.settings.json
+test-api.http
+frontend/.env*
