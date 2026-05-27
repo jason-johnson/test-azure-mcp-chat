@@ -33,7 +33,7 @@ async def test_azure_agent_list_resources(copilot_config, provider_config):
     from azure_agent import (
         AZURE_AGENT_INSTRUCTIONS,
         _get_copilot_config,
-        _mcp_permission_handler,
+        _get_mcp_server_config,
     )
 
     parts: list[str] = []
@@ -47,12 +47,15 @@ async def test_azure_agent_list_resources(copilot_config, provider_config):
                 done.set()
 
     # Use the agent's own config builder (includes MCP env vars)
-    config = _get_copilot_config(user_access_token=None)
+    config = _get_copilot_config()
 
     session_kwargs = {
         "model": os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o-mini"),
         "system_message": {"content": AZURE_AGENT_INSTRUCTIONS},
-        "on_permission_request": _mcp_permission_handler,
+        "on_permission_request": PermissionHandler.approve_all,
+        "mcp_servers": {
+            "azure": _get_mcp_server_config(user_access_token=None),
+        },
     }
     if provider_config:
         session_kwargs["provider"] = provider_config
