@@ -258,10 +258,14 @@ module api 'br/public:avm/res/app/container-app:0.12.0' = {
         }
         env: [
           { name: 'AZURE_CLIENT_ID', value: apiUserAssignedIdentity.outputs.clientId }
-          { name: 'COPILOT_MODEL', value: 'gpt-5-mini' }
+          { name: 'COPILOT_MODEL', value: modelName }
+          {
+            name: 'AZURE_OPENAI_ENDPOINT'
+            value: aiServiceExists ? reference(aiServiceAccountResourceId, '2023-05-01').endpoint : aiServices!.outputs.endpoint
+          }
+          { name: 'AZURE_OPENAI_DEPLOYMENT_NAME', value: modelName }
           { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: monitoring.outputs.connectionString }
-          // GITHUB_TOKEN should be set via Key Vault reference or manual config
-          // AZURE_OPENAI_ENDPOINT is optional — only if using Azure OpenAI instead of GitHub Copilot
+          // GITHUB_TOKEN should be set via Key Vault reference or manual config if using GitHub Copilot provider
         ]
       }
     ]
@@ -483,6 +487,17 @@ resource clientApp 'Microsoft.Graph/applications@v1.0' = {
 
 resource clientSp 'Microsoft.Graph/servicePrincipals@v1.0' = {
   appId: clientApp.appId
+}
+
+// Subscription-level Reader role for the managed identity.
+// Azure MCP needs ARM read access to list subscriptions and resources.
+resource subscriptionReaderRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(subscription().subscriptionId, apiUserAssignedIdentity.outputs.principalId, 'acdd72a7-3385-48ef-bd42-f606fba81ae7')
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'acdd72a7-3385-48ef-bd42-f606fba81ae7') // Reader
+    principalId: apiUserAssignedIdentity.outputs.principalId
+    principalType: 'ServicePrincipal'
+  }
 }
 
 // App outputs

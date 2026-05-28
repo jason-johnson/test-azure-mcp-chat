@@ -1,5 +1,9 @@
 # Python
 .venv
+.venv-*
+.python_packages
+**/.mypy_cache
+**/.ruff_cache
 **/__pycache__
 **/*.pyc
 **/*.pyo

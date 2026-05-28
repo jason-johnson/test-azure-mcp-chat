@@ -13,6 +13,7 @@ import asyncio
 import logging
 from typing import Optional
 
+from azure.identity import DefaultAzureCredential, ManagedIdentityCredential
 from copilot import CopilotClient, SubprocessConfig
 from copilot.generated.session_events import (
     AssistantMessageData,
@@ -26,7 +27,10 @@ logger = logging.getLogger(__name__)
 
 # Command to launch the azure-mcp server (npx or binary path)
 AZURE_MCP_COMMAND = os.getenv("AZURE_MCP_COMMAND", "npx")
-AZURE_MCP_ARGS = os.getenv("AZURE_MCP_ARGS", "-y @azure/mcp server start --mode all --read-only").split()
+AZURE_MCP_ARGS = os.getenv(
+    "AZURE_MCP_ARGS",
+    "-y @azure/mcp server start --read-only --outgoing-auth-strategy UseHostingEnvironmentIdentity",
+).split()
 
 AZURE_AGENT_INSTRUCTIONS = """You are an Azure infrastructure assistant for a support team.
 You have access to Azure MCP tools that can query and inspect the user's Azure resources.
@@ -45,25 +49,39 @@ def _get_mcp_server_config(user_access_token: Optional[str] = None) -> dict:
     """
     Build the azure MCP server config for create_session(mcp_servers=...).
 
-    The env vars control how azure-mcp authenticates to ARM:
-    1. If user_access_token provided: AZURE_ACCESS_TOKEN set → per-user RBAC
-    2. If None (webhook): falls back to DefaultAzureCredential → managed identity
+        This service always uses managed identity in-process (stdio mode).
+        We intentionally do not use OBO/custom audience flows.
+        Forward IDENTITY_* / MSI_* vars so azure-mcp's .NET credential chain can
+        authenticate via Container Apps managed identity.
     """
     env = {}
 
     if os.getenv("AZURE_CLIENT_ID"):
         env["AZURE_CLIENT_ID"] = os.environ["AZURE_CLIENT_ID"]
 
+    if os.getenv("AZURE_TENANT_ID"):
+        env["AZURE_TENANT_ID"] = os.environ["AZURE_TENANT_ID"]
+
+    # Required for azure-mcp in hosted environments to include MI/WI credential sources.
+    env["AZURE_MCP_INCLUDE_PRODUCTION_CREDENTIALS"] = "true"
+
     if user_access_token:
-        env["AZURE_ACCESS_TOKEN"] = user_access_token
-        logger.info("MCP auth: using user's ARM token (per-user RBAC)")
-    else:
-        logger.info("MCP auth: using managed identity / DefaultAzureCredential")
+        logger.info("MCP auth: user token provided but ignored; using managed identity stdio flow")
+
+    for var in ("IDENTITY_ENDPOINT", "IDENTITY_HEADER", "MSI_ENDPOINT", "MSI_SECRET"):
+        val = os.getenv(var)
+        if val:
+            env[var] = val
+            logger.debug("MCP auth: forwarding %s to subprocess", var)
+
+    args = list(AZURE_MCP_ARGS)
+    if "--outgoing-auth-strategy" not in args:
+        args.extend(["--outgoing-auth-strategy", "UseHostingEnvironmentIdentity"])
 
     config = {
         "type": "local",
         "command": AZURE_MCP_COMMAND,
-        "args": AZURE_MCP_ARGS,
+        "args": args,
         "tools": ["*"],
     }
     if env:
@@ -200,7 +218,6 @@ def _get_azure_provider_config() -> dict:
     }
 
     if not api_key:
-        from azure.identity import DefaultAzureCredential, ManagedIdentityCredential
         client_id = os.environ.get("AZURE_CLIENT_ID")
         credential = (
             ManagedIdentityCredential(client_id=client_id)

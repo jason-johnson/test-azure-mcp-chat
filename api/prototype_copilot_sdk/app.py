@@ -46,6 +46,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from copilot.session import PermissionHandler
 
 from azure_agent import run_azure_query, run_azure_query_streaming
 from ticket_agent import run_ticket_query
@@ -215,9 +216,14 @@ async def debug_env():
         "azure_openai_endpoint": os.getenv("AZURE_OPENAI_ENDPOINT", "not set"),
         "azure_openai_deployment": os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "not set"),
         "azure_mcp_command": os.getenv("AZURE_MCP_COMMAND", "npx"),
-        "azure_mcp_args": os.getenv("AZURE_MCP_ARGS", "-y @azure/mcp server start --mode all --read-only"),
+        "azure_mcp_args": os.getenv(
+            "AZURE_MCP_ARGS",
+            "-y @azure/mcp server start --read-only --outgoing-auth-strategy UseHostingEnvironmentIdentity",
+        ),
         "node_available": os.path.exists("/usr/local/bin/node"),
         "npx_available": os.path.exists("/usr/local/bin/npx"),
+        "identity_endpoint_set": bool(os.getenv("IDENTITY_ENDPOINT")),
+        "msi_endpoint_set": bool(os.getenv("MSI_ENDPOINT")),
     }
 
 
@@ -272,6 +278,7 @@ async def test_session():
             try:
                 async with await client.create_session(
                     model=os.getenv("COPILOT_MODEL", "gpt-4o"),
+                    on_permission_request=PermissionHandler.approve_all,
                     mcp_servers={"azure": mcp_config}
                 ) as session:
                     result["session_created"] = True

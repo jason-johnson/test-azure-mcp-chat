@@ -29,6 +29,14 @@ RUN npm run build
 # ── Stage 2: Python runtime ───────────────────────────────────────────────────
 FROM python:3.12-slim
 
+# Azure MCP server is a .NET binary and needs ICU globalization libs.
+RUN apt-get update \
+	&& apt-get install -y --no-install-recommends libicu-dev curl \
+	&& rm -rf /var/lib/apt/lists/*
+
+# Install Azure CLI so azure-mcp can use AzureCliCredential in managed identity environments.
+RUN curl -sL https://aka.ms/InstallAzureCLIDeb | bash
+
 # Copy entire Node.js installation from the frontend build stage
 COPY --from=frontend-build /usr/local /usr/local
 
@@ -45,4 +53,4 @@ COPY --from=frontend-build /frontend/build ./static
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["/bin/sh", "-c", "az login --identity --username \"$AZURE_CLIENT_ID\" >/dev/null 2>&1 || true; uvicorn app:app --host 0.0.0.0 --port 8000"]
