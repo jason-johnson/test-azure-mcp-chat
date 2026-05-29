@@ -5,7 +5,7 @@ Replaces Azure Durable Functions with a FastAPI server that supports:
   - Direct HTTP responses (no polling)
   - SSE streaming for real-time responses
   - Both agents can run in parallel via asyncio.gather
-  - Two trigger modes: web UI (user token) and webhook (managed identity)
+    - Web UI and webhook triggers via a single API service
 
 Architecture changes from agent-framework version:
   - AgentFunctionApp (Azure Functions) → FastAPI (Container App)
@@ -23,11 +23,6 @@ Infrastructure eliminated:
   - MCP-specific User-Assigned Managed Identity
   - Custom MCP audience scopes (api://.../Mcp.Tools.ReadWrite)
 
-Frontend auth simplification:
-  - MSAL scope: https://management.azure.com/user_impersonation (ARM direct)
-  - No more REACT_APP_MCP_SERVER_CLIENT_ID
-  - No more custom MCP audience
-
 Requires:
   - github-copilot-sdk (pip install github-copilot-sdk)
   - fastapi + uvicorn
@@ -40,10 +35,9 @@ import asyncio
 import logging
 from typing import Optional
 
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from copilot.session import PermissionHandler
 
@@ -317,16 +311,3 @@ async def test_session():
         return {"error": str(ex), "type": type(ex).__name__}
 
 
-# ================== Static Frontend (served last, catch-all for SPA) ==================
-
-_static_dir = os.path.join(os.path.dirname(__file__), "static")
-if os.path.isdir(_static_dir):
-    app.mount("/static", StaticFiles(directory=_static_dir + "/static"), name="assets")
-
-    @app.get("/{full_path:path}", include_in_schema=False)
-    async def serve_spa(full_path: str):
-        """Serve the React SPA for any non-API route."""
-        file_path = os.path.join(_static_dir, full_path)
-        if os.path.isfile(file_path):
-            return FileResponse(file_path)
-        return FileResponse(os.path.join(_static_dir, "index.html"))
