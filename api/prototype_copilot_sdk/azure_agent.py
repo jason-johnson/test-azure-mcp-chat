@@ -4,9 +4,8 @@ Azure Resource Agent — rewritten for github-copilot-sdk.
 Azure MCP server runs as a LOCAL STDIO SUBPROCESS configured via mcp_servers
 on create_session() — the Copilot CLI manages the subprocess lifecycle.
 
-Dual auth mode for ARM access:
-  - Web UI (user logged in):  user's ARM token passed via AZURE_ACCESS_TOKEN env var
-  - Webhook (no user):        container's managed identity via DefaultAzureCredential
+Authentication mode for ARM access:
+    - Managed identity only (Container Apps hosting environment)
 """
 import os
 import asyncio
@@ -45,7 +44,7 @@ Guidelines:
 - Never modify or delete resources unless the user explicitly asks and confirms."""
 
 
-def _get_mcp_server_config(user_access_token: Optional[str] = None) -> dict:
+def _get_mcp_server_config() -> dict:
     """
     Build the azure MCP server config for create_session(mcp_servers=...).
 
@@ -64,9 +63,9 @@ def _get_mcp_server_config(user_access_token: Optional[str] = None) -> dict:
 
     # Required for azure-mcp in hosted environments to include MI/WI credential sources.
     env["AZURE_MCP_INCLUDE_PRODUCTION_CREDENTIALS"] = "true"
-
-    if user_access_token:
-        logger.info("MCP auth: user token provided but ignored; using managed identity stdio flow")
+    # Newer Azure MCP builds honor AZURE_TOKEN_CREDENTIALS to pin credential selection.
+    # This avoids falling back to developer creds (az login, VS Code broker) in Container Apps.
+    env["AZURE_TOKEN_CREDENTIALS"] = "ManagedIdentityCredential"
 
     for var in ("IDENTITY_ENDPOINT", "IDENTITY_HEADER", "MSI_ENDPOINT", "MSI_SECRET"):
         val = os.getenv(var)
@@ -99,14 +98,12 @@ def _get_copilot_config() -> SubprocessConfig:
     return SubprocessConfig(**kwargs)
 
 
-async def run_azure_query(query: str, user_access_token: Optional[str] = None) -> str:
+async def run_azure_query(query: str) -> str:
     """
     Run a query against Azure resources via the local MCP server.
 
     Args:
         query: Natural language query about Azure resources.
-        user_access_token: Optional ARM-scoped OAuth token from the logged-in user.
-
     Returns:
         The agent's response as a string.
     """
@@ -132,7 +129,7 @@ async def run_azure_query(query: str, user_access_token: Optional[str] = None) -
             "system_message": {"content": AZURE_AGENT_INSTRUCTIONS},
             "on_permission_request": PermissionHandler.approve_all,
             "mcp_servers": {
-                "azure": _get_mcp_server_config(user_access_token),
+                "azure": _get_mcp_server_config(),
             },
         }
 
@@ -153,7 +150,7 @@ async def run_azure_query(query: str, user_access_token: Optional[str] = None) -
         return f"Error querying Azure resources: {ex}"
 
 
-async def run_azure_query_streaming(query: str, user_access_token: Optional[str] = None):
+async def run_azure_query_streaming(query: str):
     """
     Generator version that yields streaming chunks for SSE responses.
     """
@@ -183,7 +180,7 @@ async def run_azure_query_streaming(query: str, user_access_token: Optional[str]
             "on_permission_request": PermissionHandler.approve_all,
             "streaming": True,
             "mcp_servers": {
-                "azure": _get_mcp_server_config(user_access_token),
+                "azure": _get_mcp_server_config(),
             },
         }
 

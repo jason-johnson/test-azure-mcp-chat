@@ -13,9 +13,8 @@ Architecture changes from agent-framework version:
   - REST + polling → SSE streaming (optional, falls back to blocking)
   - MCP Container App (HTTP + OBO) → azure-mcp subprocess (stdio)
 
-Dual auth for ARM access:
-  - Web UI:  user's ARM token (per-user RBAC) — scope: management.azure.com
-  - Webhook: managed identity (service RBAC) — no token needed
+ARM access auth:
+    - Managed identity only (service RBAC)
 
 Infrastructure eliminated:
   - MCP Container App + Container Apps Environment
@@ -68,9 +67,8 @@ app.add_middleware(
 # ================== Request/Response Models ==================
 
 class QueryRequest(BaseModel):
-    """Request model for web UI queries (user provides ARM token)."""
+    """Request model for web UI queries."""
     query: str
-    userAccessToken: Optional[str] = None  # ARM-scoped token from logged-in user
 
 
 class WebhookRequest(BaseModel):
@@ -89,17 +87,17 @@ class CombinedResponse(BaseModel):
     tickets: QueryResponse
 
 
-# ================== Web UI Endpoints (user token → per-user RBAC) ==================
+# ================== Web UI Endpoints ==================
 
 @app.post("/api/query/azure", response_model=QueryResponse)
 async def azure_query(req: QueryRequest):
-    """Run an Azure resource query. User's ARM token used if provided."""
+    """Run an Azure resource query."""
     if not req.query:
         raise HTTPException(status_code=400, detail="Missing 'query'")
 
     try:
-        logger.info(f"Azure query received: {req.query[:50]}... | Token provided: {bool(req.userAccessToken)}")
-        result = await run_azure_query(req.query, req.userAccessToken)
+        logger.info(f"Azure query received: {req.query[:50]}...")
+        result = await run_azure_query(req.query)
         logger.info(f"Azure query result length: {len(result) if result else 0}")
         return QueryResponse(result=result)
     except Exception as ex:
@@ -114,7 +112,7 @@ async def azure_query_stream(req: QueryRequest):
         raise HTTPException(status_code=400, detail="Missing 'query'")
 
     async def event_generator():
-        async for chunk in run_azure_query_streaming(req.query, req.userAccessToken):
+        async for chunk in run_azure_query_streaming(req.query):
             yield f"data: {json.dumps({'content': chunk})}\n\n"
         yield "data: [DONE]\n\n"
 
@@ -141,7 +139,7 @@ async def combined_query(req: QueryRequest):
     if not req.query:
         raise HTTPException(status_code=400, detail="Missing 'query'")
 
-    azure_task = run_azure_query(req.query, req.userAccessToken)
+    azure_task = run_azure_query(req.query)
     ticket_task = run_ticket_query(req.query)
 
     results = await asyncio.gather(azure_task, ticket_task, return_exceptions=True)
@@ -161,7 +159,7 @@ async def combined_query(req: QueryRequest):
     )
 
 
-# ================== Webhook Endpoint (MI auth → service RBAC) ==================
+# ================== Webhook Endpoint ==================
 
 @app.post("/api/webhook/ticket-created", response_model=CombinedResponse)
 async def ticket_created_webhook(req: WebhookRequest):
@@ -182,8 +180,7 @@ async def ticket_created_webhook(req: WebhookRequest):
 
     logger.info(f"Webhook: ticket created — {req.ticket_id or 'no ticket ID'}")
 
-    # No userAccessToken → azure-mcp falls back to managed identity
-    azure_task = run_azure_query(req.query, user_access_token=None)
+    azure_task = run_azure_query(req.query)
     ticket_task = run_ticket_query(req.query)
 
     results = await asyncio.gather(azure_task, ticket_task, return_exceptions=True)
@@ -272,7 +269,7 @@ async def test_session():
         async with CopilotClient(_get_copilot_config()) as client:
             result["client_created"] = True
             
-            mcp_config = _get_mcp_server_config(None)  # Test with MI
+            mcp_config = _get_mcp_server_config()
             result["mcp_config"] = mcp_config
             
             try:
