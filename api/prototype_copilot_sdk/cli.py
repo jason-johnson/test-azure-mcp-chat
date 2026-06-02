@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -91,6 +92,54 @@ class CliRunner:
             "result": text,
             "errors": turn.errors,
         }
+
+
+def _build_client_kwargs() -> dict[str, Any]:
+    """Build client kwargs using token env when available."""
+    kwargs: dict[str, Any] = {}
+    gh_token = os.getenv("GITHUB_TOKEN")
+    if gh_token:
+        kwargs["github_token"] = gh_token
+    return kwargs
+
+
+def _build_provider_config() -> Optional[dict[str, Any]]:
+    """Optional Azure OpenAI provider config from environment variables."""
+    endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+    if not endpoint:
+        return None
+
+    deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-5")
+    api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-10-21")
+    api_key = os.getenv("AZURE_OPENAI_API_KEY")
+
+    provider: dict[str, Any] = {
+        "type": "azure",
+        "base_url": endpoint,
+        "azure": {
+            "api_version": api_version,
+            "deployment": deployment,
+        },
+    }
+
+    if api_key:
+        provider["api_key"] = api_key
+
+    return provider
+
+
+def _validate_auth_inputs() -> None:
+    """Fail fast with actionable guidance when auth is missing."""
+    has_gh_token = bool(os.getenv("GITHUB_TOKEN"))
+    has_azure_provider = bool(os.getenv("AZURE_OPENAI_ENDPOINT"))
+    if has_gh_token or has_azure_provider:
+        return
+
+    raise RuntimeError(
+        "No authentication configured. Set GITHUB_TOKEN for Copilot auth "
+        "or set AZURE_OPENAI_ENDPOINT (and optionally AZURE_OPENAI_API_KEY) "
+        "for Azure provider mode."
+    )
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -177,7 +226,8 @@ async def _interactive_loop(state: CliState) -> int:
     print(f"model={state.model} stream={state.stream} json={state.json_output}")
     _print_interactive_help()
 
-    client = CopilotClient()
+    _validate_auth_inputs()
+    client = CopilotClient(**_build_client_kwargs())
     await client.start()
 
     session_kwargs: dict[str, Any] = {
@@ -193,6 +243,10 @@ async def _interactive_loop(state: CliState) -> int:
     session_kwargs["system_message"] = {
         "content": "Follow workspace instructions and use available skills for task execution."
     }
+
+    provider = _build_provider_config()
+    if provider is not None:
+        session_kwargs["provider"] = provider
 
     session = await client.create_session(**session_kwargs)
     runner = CliRunner(session=session, stream=state.stream)
@@ -244,7 +298,8 @@ async def _main_async(args: argparse.Namespace) -> int:
     if not args.query:
         return await _interactive_loop(state)
 
-    client = CopilotClient()
+    _validate_auth_inputs()
+    client = CopilotClient(**_build_client_kwargs())
     await client.start()
 
     session_kwargs: dict[str, Any] = {
@@ -257,6 +312,10 @@ async def _main_async(args: argparse.Namespace) -> int:
     }
     if state.skill_dirs:
         session_kwargs["skill_directories"] = state.skill_dirs
+
+    provider = _build_provider_config()
+    if provider is not None:
+        session_kwargs["provider"] = provider
 
     session = await client.create_session(**session_kwargs)
     runner = CliRunner(session=session, stream=state.stream)
@@ -279,9 +338,15 @@ def main() -> int:
     args = parser.parse_args()
     try:
         return asyncio.run(_main_async(args))
+    except RuntimeError as ex:
+        print(f"Error: {ex}", file=sys.stderr)
+        return 2
     except KeyboardInterrupt:
         print("\nbye")
         return 130
+    except Exception as ex:
+        print(f"Error: unexpected failure: {ex}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
