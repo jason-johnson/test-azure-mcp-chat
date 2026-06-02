@@ -2,7 +2,9 @@
 set -eu
 
 # azd injects environment values from .azure/<env>/.env into hooks.
-required_vars="AZURE_RESOURCE_GROUP SERVICE_API_NAME CLIENT_APP_CLIENT_ID AZURE_TENANT_ID"
+resource_group="${AZURE_RESOURCE_GROUP:-${RESOURCE_GROUP:-}}"
+
+required_vars="SERVICE_API_NAME CLIENT_APP_CLIENT_ID AZURE_TENANT_ID"
 for var in $required_vars; do
   eval value="\${$var:-}"
   if [ -z "$value" ]; then
@@ -12,12 +14,20 @@ for var in $required_vars; do
   fi
 done
 
-echo "[postdeploy] Updating Container App env vars on ${SERVICE_API_NAME}..."
+if [ -z "$resource_group" ]; then
+  echo "[postdeploy] Missing resource group environment variable (AZURE_RESOURCE_GROUP or RESOURCE_GROUP)."
+  echo "[postdeploy] Skipping Container App env update."
+  exit 0
+fi
+
+echo "[postdeploy] Updating Container App env vars on ${SERVICE_API_NAME} in ${resource_group}..."
 az containerapp update \
   --name "$SERVICE_API_NAME" \
-  --resource-group "$AZURE_RESOURCE_GROUP" \
+  --resource-group "$resource_group" \
   --set-env-vars \
     "MSAL_CLIENT_ID=$CLIENT_APP_CLIENT_ID" \
     "TENANT_ID=$AZURE_TENANT_ID"
 
 echo "[postdeploy] Container App env vars updated successfully."
+
+"$(dirname "$0")/postdeploy-verify.sh"

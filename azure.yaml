@@ -10,8 +10,7 @@ services:
       path: ./Dockerfile
       context: ../..
       remoteBuild: true
-
-hooks:
-  postdeploy:
-    shell: sh
-    run: ./hooks/postdeploy.sh
+    hooks:
+      postdeploy:
+        shell: sh
+        run: ../../hooks/postdeploy.sh
