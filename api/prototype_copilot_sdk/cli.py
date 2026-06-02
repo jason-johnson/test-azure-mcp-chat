@@ -34,7 +34,7 @@ from copilot.session import PermissionHandler
 class CliState:
     stream: bool
     json_output: bool
-    model: str
+    model: Optional[str]
     skill_dirs: list[str]
 
 
@@ -94,13 +94,15 @@ class CliRunner:
         }
 
 
-def _build_client_kwargs() -> dict[str, Any]:
-    """Build client kwargs using token env when available."""
-    kwargs: dict[str, Any] = {}
-    gh_token = os.getenv("GITHUB_TOKEN")
-    if gh_token:
-        kwargs["github_token"] = gh_token
-    return kwargs
+def _normalize_auth_env() -> None:
+    """Normalize token env names so SDK auto-discovery works consistently."""
+    token = (
+        os.getenv("COPILOT_GITHUB_TOKEN")
+        or os.getenv("GH_TOKEN")
+        or os.getenv("GITHUB_TOKEN")
+    )
+    if token and not os.getenv("COPILOT_GITHUB_TOKEN"):
+        os.environ["COPILOT_GITHUB_TOKEN"] = token
 
 
 def _build_provider_config() -> Optional[dict[str, Any]]:
@@ -149,8 +151,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--model",
-        default="gpt-5",
-        help="Model name passed to create_session.",
+        default=None,
+        help="Optional model name passed to create_session (for example, gpt-4.1).",
     )
     parser.add_argument(
         "--query",
@@ -223,18 +225,21 @@ def _handle_command(raw: str, state: CliState) -> bool:
 
 async def _interactive_loop(state: CliState) -> int:
     print("Copilot Skills CLI")
-    print(f"model={state.model} stream={state.stream} json={state.json_output}")
+    selected_model = state.model if state.model else "default"
+    print(f"model={selected_model} stream={state.stream} json={state.json_output}")
     _print_interactive_help()
 
     _validate_auth_inputs()
-    client = CopilotClient(**_build_client_kwargs())
+    _normalize_auth_env()
+    client = CopilotClient()
     await client.start()
 
     session_kwargs: dict[str, Any] = {
         "on_permission_request": PermissionHandler.approve_all,
-        "model": state.model,
         "streaming": state.stream,
     }
+    if state.model:
+        session_kwargs["model"] = state.model
 
     if state.skill_dirs:
         session_kwargs["skill_directories"] = state.skill_dirs
@@ -248,7 +253,16 @@ async def _interactive_loop(state: CliState) -> int:
     if provider is not None:
         session_kwargs["provider"] = provider
 
-    session = await client.create_session(**session_kwargs)
+    try:
+        session = await client.create_session(**session_kwargs)
+    except Exception as ex:
+        await client.stop()
+        raise RuntimeError(
+            f"Failed to create session: {ex}. "
+            "If this is a model availability issue, retry without --model "
+            "or specify an available model with --model."
+        )
+
     runner = CliRunner(session=session, stream=state.stream)
     session.on(runner.on_event)
 
@@ -276,7 +290,12 @@ async def _interactive_loop(state: CliState) -> int:
             if not state.stream:
                 print("Assistant>")
 
-            payload = await runner.ask(text)
+            try:
+                payload = await runner.ask(text)
+            except Exception as ex:
+                # Keep interactive mode alive on per-turn failures.
+                print(f"Error: {ex}", file=sys.stderr)
+                continue
 
             if state.json_output:
                 print(json.dumps(payload, indent=2, ensure_ascii=True))
@@ -299,17 +318,19 @@ async def _main_async(args: argparse.Namespace) -> int:
         return await _interactive_loop(state)
 
     _validate_auth_inputs()
-    client = CopilotClient(**_build_client_kwargs())
+    _normalize_auth_env()
+    client = CopilotClient()
     await client.start()
 
     session_kwargs: dict[str, Any] = {
         "on_permission_request": PermissionHandler.approve_all,
-        "model": state.model,
         "streaming": state.stream,
         "system_message": {
             "content": "Follow workspace instructions and use available skills for task execution."
         },
     }
+    if state.model:
+        session_kwargs["model"] = state.model
     if state.skill_dirs:
         session_kwargs["skill_directories"] = state.skill_dirs
 
