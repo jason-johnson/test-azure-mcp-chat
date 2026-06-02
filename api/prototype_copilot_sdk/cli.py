@@ -21,13 +21,58 @@ import sys
 from dataclasses import dataclass
 from typing import Any, Optional
 
+from pathlib import Path
+
 from copilot import CopilotClient
 from copilot.generated.session_events import (
     AssistantMessageData,
     AssistantMessageDeltaData,
     SessionErrorData,
 )
-from copilot.session import PermissionHandler
+from copilot.session import PermissionHandler, PermissionRequestResult
+
+# Skills bundled with this CLI — auto-loaded unless overridden.
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+_DEFAULT_SKILL_DIRS = [str(_REPO_ROOT / "skills")]
+
+
+# Shell commands that the user has approved for the current session.
+_SESSION_ALLOWED_COMMANDS: set[str] = set()
+
+
+def _make_permission_handler():
+    """Return an on_permission_request handler that asks the user interactively
+    before running any shell command not already approved in this session.
+    Non-shell requests (read, write, url, mcp, …) are approved automatically.
+    """
+    def handler(request, invocation) -> PermissionRequestResult:
+        kind = getattr(request.kind, "value", str(request.kind))
+
+        if kind != "shell":
+            return PermissionRequestResult(kind="approved")
+
+        cmd = getattr(request, "full_command_text", "") or ""
+
+        if cmd in _SESSION_ALLOWED_COMMANDS:
+            return PermissionRequestResult(kind="approved")
+
+        # Print on a fresh line so prompt doesn't collide with streamed output.
+        print(f"\n[Permission required] The agent wants to run:\n  {cmd}")
+        print("  [y] Approve once   [a] Approve for this session   [n] Deny")
+        try:
+            answer = input("  Your choice [y/a/n]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            answer = "n"
+
+        if answer == "a":
+            _SESSION_ALLOWED_COMMANDS.add(cmd)
+            return PermissionRequestResult(kind="approved")
+        if answer == "y":
+            return PermissionRequestResult(kind="approved")
+        print("  Command denied.")
+        return PermissionRequestResult(kind="denied-interactively-by-user")
+
+    return handler
 
 
 @dataclass
@@ -173,7 +218,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "--skill-dir",
         action="append",
         default=[],
-        help="Additional skill directory to load (repeatable).",
+        help="Additional skill directory to load (repeatable). The bundled skills/ directory is always included.",
+    )
+    parser.add_argument(
+        "--no-default-skills",
+        action="store_true",
+        help="Skip loading the bundled skills/ directory.",
     )
     return parser
 
@@ -235,19 +285,21 @@ async def _interactive_loop(state: CliState) -> int:
     await client.start()
 
     session_kwargs: dict[str, Any] = {
-        "on_permission_request": PermissionHandler.approve_all,
+        "on_permission_request": _make_permission_handler(),
         "streaming": state.stream,
+        "system_message": {
+            "content": "Follow workspace instructions and use available skills for task execution."
+        },
     }
     if state.model:
         session_kwargs["model"] = state.model
 
-    if state.skill_dirs:
-        session_kwargs["skill_directories"] = state.skill_dirs
-
-    # Keep system prompt minimal so workspace skills drive behavior.
-    session_kwargs["system_message"] = {
-        "content": "Follow workspace instructions and use available skills for task execution."
-    }
+    all_skill_dirs = list(state.skill_dirs)
+    for d in _DEFAULT_SKILL_DIRS:
+        if d not in all_skill_dirs:
+            all_skill_dirs.append(d)
+    if all_skill_dirs:
+        session_kwargs["skill_directories"] = all_skill_dirs
 
     provider = _build_provider_config()
     if provider is not None:
@@ -307,11 +359,13 @@ async def _interactive_loop(state: CliState) -> int:
 
 
 async def _main_async(args: argparse.Namespace) -> int:
+    default_skills = [] if args.no_default_skills else _DEFAULT_SKILL_DIRS
+    extra_skills = [d for d in args.skill_dir if d not in default_skills]
     state = CliState(
         stream=args.stream,
         json_output=args.json,
         model=args.model,
-        skill_dirs=args.skill_dir,
+        skill_dirs=extra_skills,
     )
 
     if not args.query:
@@ -323,7 +377,7 @@ async def _main_async(args: argparse.Namespace) -> int:
     await client.start()
 
     session_kwargs: dict[str, Any] = {
-        "on_permission_request": PermissionHandler.approve_all,
+        "on_permission_request": _make_permission_handler(),
         "streaming": state.stream,
         "system_message": {
             "content": "Follow workspace instructions and use available skills for task execution."
@@ -331,8 +385,13 @@ async def _main_async(args: argparse.Namespace) -> int:
     }
     if state.model:
         session_kwargs["model"] = state.model
-    if state.skill_dirs:
-        session_kwargs["skill_directories"] = state.skill_dirs
+
+    all_skill_dirs = list(state.skill_dirs)
+    for d in _DEFAULT_SKILL_DIRS:
+        if d not in all_skill_dirs:
+            all_skill_dirs.append(d)
+    if all_skill_dirs:
+        session_kwargs["skill_directories"] = all_skill_dirs
 
     provider = _build_provider_config()
     if provider is not None:
