@@ -122,12 +122,14 @@ resource rg 'Microsoft.Resources/resourceGroups@2025-04-01' = {
   tags: tags
 }
 
+var apiUserAssignedIdentityResourceName = !empty(apiUserAssignedIdentityName) ? apiUserAssignedIdentityName : '${abbrs.managedIdentityUserAssignedIdentities}api-${resourceToken}'
+
 // User assigned managed identity using AVM
 module apiUserAssignedIdentity 'br/public:avm/res/managed-identity/user-assigned-identity:0.4.0' = {
   name: 'apiUserAssignedIdentity-${resourceToken}'
   scope: rg
   params: {
-    name: !empty(apiUserAssignedIdentityName) ? apiUserAssignedIdentityName : '${abbrs.managedIdentityUserAssignedIdentities}api-${resourceToken}'
+    name: apiUserAssignedIdentityResourceName
     location: location
     tags: tags
   }
@@ -489,13 +491,13 @@ resource clientSp 'Microsoft.Graph/servicePrincipals@v1.0' = {
   appId: clientApp.appId
 }
 
-// Subscription-level Reader role for the managed identity.
-// Azure MCP needs ARM read access to list subscriptions and resources.
-resource subscriptionReaderRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(subscription().subscriptionId, apiUserAssignedIdentity.outputs.principalId, 'acdd72a7-3385-48ef-bd42-f606fba81ae7')
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'acdd72a7-3385-48ef-bd42-f606fba81ae7') // Reader
+// Keep the legacy Reader assignment GUID based on principalId so existing
+// environments don't collide with a second assignment for the same identity.
+module subscriptionReaderRole './subscriptionRoleAssignment.bicep' = {
+  name: 'subscriptionReaderRole-${resourceToken}'
+  params: {
     principalId: apiUserAssignedIdentity.outputs.principalId
+    roleDefinitionId: 'acdd72a7-3385-48ef-bd42-f606fba81ae7'
     principalType: 'ServicePrincipal'
   }
 }
