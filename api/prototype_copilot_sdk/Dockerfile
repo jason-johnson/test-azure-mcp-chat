@@ -1,4 +1,13 @@
-# Backend-only runtime image (FastAPI + stdio Azure MCP subprocess).
+# Build the React frontend.
+FROM node:20-slim AS frontend-build
+
+WORKDIR /frontend
+COPY frontend/package*.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+
+# Backend runtime image (FastAPI + stdio Azure MCP subprocess + served frontend).
 FROM python:3.12-slim
 
 # Azure MCP server is a .NET binary and needs ICU globalization libs.
@@ -21,6 +30,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY api/prototype_copilot_sdk/app.py api/prototype_copilot_sdk/azure_agent.py api/prototype_copilot_sdk/ticket_agent.py ./
+
+# Copy compiled frontend and serve it from FastAPI.
+COPY --from=frontend-build /frontend/build ./frontend_build
 
 EXPOSE 8000
 

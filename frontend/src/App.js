@@ -1,6 +1,6 @@
 // App.js
 import React from 'react';
-import { useIsAuthenticated, useMsal, AuthenticatedTemplate, UnauthenticatedTemplate } from '@azure/msal-react';
+import { useMsal, AuthenticatedTemplate, UnauthenticatedTemplate } from '@azure/msal-react';
 import ChatInterface from './components/ChatInterface';
 import { loginRequest } from './authConfig';
 

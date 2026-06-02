@@ -5,7 +5,8 @@ import { useMsal } from '@azure/msal-react';
 import '../ChatInterface.css';
 import { armScopes } from '../authConfig';
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000/api';
+const runtimeConfig = window.__APP_CONFIG__ || {};
+const API_URL = runtimeConfig.apiUrl || process.env.REACT_APP_API_URL || '/api';
 
 const AGENT_MODES = {
   azure: { label: 'Azure Resources', endpoint: 'query/azure', icon: '☁️' },

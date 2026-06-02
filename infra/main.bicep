@@ -260,6 +260,7 @@ module api 'br/public:avm/res/app/container-app:0.12.0' = {
         }
         env: [
           { name: 'AZURE_CLIENT_ID', value: apiUserAssignedIdentity.outputs.clientId }
+          { name: 'TENANT_ID', value: tenant().tenantId }
           { name: 'COPILOT_MODEL', value: modelName }
           {
             name: 'AZURE_OPENAI_ENDPOINT'

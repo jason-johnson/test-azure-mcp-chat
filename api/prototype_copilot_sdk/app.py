@@ -33,11 +33,13 @@ import os
 import json
 import asyncio
 import logging
+from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from copilot.session import PermissionHandler
 
@@ -48,6 +50,9 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Azure Support Assistant (Copilot SDK)")
 
+frontend_build_dir = Path(__file__).resolve().parent / 'frontend_build'
+frontend_index_file = frontend_build_dir / 'index.html'
+
 # CORS — allow the React frontend (local dev + production)
 app.add_middleware(
     CORSMiddleware,
@@ -56,6 +61,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+if frontend_build_dir.exists():
+    app.mount('/assets', StaticFiles(directory=str(frontend_build_dir / 'static')), name='frontend-static')
 
 
 # ================== Request/Response Models ==================
@@ -198,6 +206,45 @@ async def ticket_created_webhook(req: WebhookRequest):
 async def health():
     """Health check endpoint."""
     return {"status": "healthy", "framework": "github-copilot-sdk"}
+
+
+@app.get('/env-config.js')
+async def env_config_js():
+    """Expose runtime config for the SPA in same-container deployments."""
+    config = {
+        'apiUrl': os.getenv('FRONTEND_API_URL', '/api'),
+        'msalClientId': os.getenv('MSAL_CLIENT_ID', os.getenv('CLIENT_APP_CLIENT_ID', '')),
+        'tenantId': os.getenv('TENANT_ID', os.getenv('AZURE_TENANT_ID', 'common')),
+    }
+    script = f"window.__APP_CONFIG__ = {json.dumps(config)};"
+    return Response(content=script, media_type='application/javascript')
+
+
+@app.get('/')
+async def spa_index():
+    """Serve the frontend entrypoint when bundled assets are available."""
+    if frontend_index_file.exists():
+        return FileResponse(frontend_index_file)
+    return {'status': 'ok', 'message': 'Frontend bundle not found. Build frontend to serve UI.'}
+
+
+@app.get('/{path:path}')
+async def spa_fallback(path: str):
+    """Serve static frontend files and fallback to index.html for client routing."""
+    if path.startswith('api/'):
+        raise HTTPException(status_code=404, detail='Not Found')
+
+    if frontend_build_dir.exists():
+        candidate = frontend_build_dir / path
+        if candidate.exists() and candidate.is_file():
+            return FileResponse(candidate)
+
+        if frontend_index_file.exists():
+            return FileResponse(frontend_index_file)
+
+    raise HTTPException(status_code=404, detail='Not Found')
+
+
 @app.get("/api/debug/env")
 async def debug_env():
     """Show environment configuration."""

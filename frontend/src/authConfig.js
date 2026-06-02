@@ -1,10 +1,12 @@
 import { PublicClientApplication } from '@azure/msal-browser';
 
-// These come from azd environment outputs, injected at build time
+const runtimeConfig = window.__APP_CONFIG__ || {};
+
+// Config resolves in this order: runtime injection -> build env vars -> safe defaults.
 const msalConfig = {
   auth: {
-    clientId: process.env.REACT_APP_MCP_CLIENT_ID || '',
-    authority: `https://login.microsoftonline.com/${process.env.REACT_APP_TENANT_ID || 'common'}`,
+    clientId: runtimeConfig.msalClientId || process.env.REACT_APP_MCP_CLIENT_ID || '',
+    authority: `https://login.microsoftonline.com/${runtimeConfig.tenantId || process.env.REACT_APP_TENANT_ID || 'common'}`,
     redirectUri: window.location.origin,
   },
   cache: {
