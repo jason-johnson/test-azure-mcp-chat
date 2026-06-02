@@ -30,6 +30,7 @@ AZURE_MCP_ARGS = os.getenv(
     "AZURE_MCP_ARGS",
     "-y @azure/mcp server start --read-only --outgoing-auth-strategy UseHostingEnvironmentIdentity",
 ).split()
+AZURE_AGENT_TIMEOUT_SECONDS = int(os.getenv("AZURE_AGENT_TIMEOUT_SECONDS", "90"))
 
 AZURE_AGENT_INSTRUCTIONS = """You are an Azure infrastructure assistant for a support team.
 You have access to Azure MCP tools that can query and inspect the user's Azure resources.
@@ -140,10 +141,24 @@ async def run_azure_query(query: str) -> str:
         async with CopilotClient(_get_copilot_config()) as client:
             async with await client.create_session(**session_kwargs) as session:
                 session.on(on_event)
-                await session.send(query)
-                await asyncio.wait_for(done.wait(), timeout=120)
+                send_task = asyncio.create_task(session.send(query))
+                try:
+                    await asyncio.wait_for(done.wait(), timeout=AZURE_AGENT_TIMEOUT_SECONDS)
+                finally:
+                    if not send_task.done():
+                        send_task.cancel()
+                if send_task.done() and not send_task.cancelled():
+                    await send_task
 
         return "".join(response_parts) or "No response from agent."
+
+    except TimeoutError:
+        timeout_msg = (
+            f"Error querying Azure resources: request timed out after "
+            f"{AZURE_AGENT_TIMEOUT_SECONDS} seconds. Please retry with a narrower query."
+        )
+        logger.warning(timeout_msg)
+        return timeout_msg
 
     except Exception as ex:
         logger.error(f"Azure agent error: {ex}", exc_info=True)
@@ -190,14 +205,24 @@ async def run_azure_query_streaming(query: str):
         async with CopilotClient(_get_copilot_config()) as client:
             async with await client.create_session(**session_kwargs) as session:
                 session.on(on_event)
-                await session.send(query)
+                send_task = asyncio.create_task(session.send(query))
+                try:
+                    while True:
+                        chunk = await asyncio.wait_for(chunk_queue.get(), timeout=AZURE_AGENT_TIMEOUT_SECONDS)
+                        if chunk is None:
+                            break
+                        yield chunk
+                finally:
+                    if not send_task.done():
+                        send_task.cancel()
+                if send_task.done() and not send_task.cancelled():
+                    await send_task
 
-                while True:
-                    chunk = await asyncio.wait_for(chunk_queue.get(), timeout=120)
-                    if chunk is None:
-                        break
-                    yield chunk
-
+    except TimeoutError:
+        yield (
+            f"Error: request timed out after {AZURE_AGENT_TIMEOUT_SECONDS} seconds. "
+            "Please retry with a narrower query."
+        )
     except Exception as ex:
         logger.error(f"Azure agent streaming error: {ex}", exc_info=True)
         yield f"Error: {ex}"

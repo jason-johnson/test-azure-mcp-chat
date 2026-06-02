@@ -228,23 +228,6 @@ async def spa_index():
     return {'status': 'ok', 'message': 'Frontend bundle not found. Build frontend to serve UI.'}
 
 
-@app.get('/{path:path}')
-async def spa_fallback(path: str):
-    """Serve static frontend files and fallback to index.html for client routing."""
-    if path.startswith('api/'):
-        raise HTTPException(status_code=404, detail='Not Found')
-
-    if frontend_build_dir.exists():
-        candidate = frontend_build_dir / path
-        if candidate.exists() and candidate.is_file():
-            return FileResponse(candidate)
-
-        if frontend_index_file.exists():
-            return FileResponse(frontend_index_file)
-
-    raise HTTPException(status_code=404, detail='Not Found')
-
-
 @app.get("/api/debug/env")
 async def debug_env():
     """Show environment configuration."""
@@ -356,5 +339,22 @@ async def test_session():
     except Exception as ex:
         logger.error(f"Session test failed: {ex}", exc_info=True)
         return {"error": str(ex), "type": type(ex).__name__}
+
+
+@app.get('/{path:path}')
+async def spa_fallback(path: str):
+    """Serve static frontend files and fallback to index.html for client routing."""
+    if path.startswith('api/'):
+        raise HTTPException(status_code=404, detail='Not Found')
+
+    if frontend_build_dir.exists():
+        candidate = frontend_build_dir / path
+        if candidate.exists() and candidate.is_file():
+            return FileResponse(candidate)
+
+        if frontend_index_file.exists():
+            return FileResponse(frontend_index_file)
+
+    raise HTTPException(status_code=404, detail='Not Found')
 
 
