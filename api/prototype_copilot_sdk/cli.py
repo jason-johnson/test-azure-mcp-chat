@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import inspect
 import json
 import os
 import sys
@@ -27,9 +28,13 @@ from copilot import CopilotClient
 from copilot.generated.session_events import (
     AssistantMessageData,
     AssistantMessageDeltaData,
+    PermissionCompletedData,
     SessionErrorData,
+    ToolExecutionCompleteData,
+    ToolExecutionStartData,
 )
-from copilot.session import PermissionHandler, PermissionRequestResult
+from copilot.session import PermissionHandler
+import copilot.generated.rpc as rpc
 
 # Skills bundled with this CLI — auto-loaded unless overridden.
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -40,39 +45,118 @@ _DEFAULT_SKILL_DIRS = [str(_REPO_ROOT / "skills")]
 _SESSION_ALLOWED_COMMANDS: set[str] = set()
 
 
+def _decision_approve_once():
+    cls = getattr(rpc, "PermissionDecisionApproveOnce", None)
+    if cls is not None:
+        return cls()
+
+    cls = getattr(rpc, "PermissionDecisionApproved", None)
+    if cls is not None:
+        return cls()
+
+    raise RuntimeError("No compatible approve decision class found in copilot.generated.rpc")
+
+
+def _decision_approve_for_session_command(cmd: str):
+    approve_for_session = getattr(rpc, "PermissionDecisionApproveForSession", None)
+    approval_commands = getattr(rpc, "PermissionDecisionApproveForSessionApprovalCommands", None)
+
+    if approve_for_session is not None and approval_commands is not None:
+        return approve_for_session(
+            approval=approval_commands(command_identifiers=[cmd])
+        )
+
+    # Fallback for SDKs without explicit "approve for session command" types.
+    return _decision_approve_once()
+
+
+def _decision_deny():
+    denied = getattr(rpc, "PermissionDecisionDeniedInteractivelyByUser", None)
+    if denied is not None:
+        return denied()
+
+    reject = getattr(rpc, "PermissionDecisionReject", None)
+    if reject is not None:
+        return reject(feedback="Denied by user")
+
+    cancelled = getattr(rpc, "PermissionDecisionCancelled", None)
+    if cancelled is not None:
+        return cancelled(reason="Denied by user")
+
+    raise RuntimeError("No compatible deny decision class found in copilot.generated.rpc")
+
+
 def _make_permission_handler():
-    """Return an on_permission_request handler that asks the user interactively
-    before running any shell command not already approved in this session.
-    Non-shell requests (read, write, url, mcp, …) are approved automatically.
+    """Return a permissive fallback permission handler.
+
+    Shell approval is handled in on_pre_tool_use so we get exactly one prompt
+    in the terminal. This fallback prevents the runtime from introducing a
+    second implicit ask/deny step.
     """
-    def handler(request, invocation) -> PermissionRequestResult:
-        kind = getattr(request.kind, "value", str(request.kind))
 
-        if kind != "shell":
-            return PermissionRequestResult(kind="approved")
-
-        cmd = getattr(request, "full_command_text", "") or ""
-
-        if cmd in _SESSION_ALLOWED_COMMANDS:
-            return PermissionRequestResult(kind="approved")
-
-        # Print on a fresh line so prompt doesn't collide with streamed output.
-        print(f"\n[Permission required] The agent wants to run:\n  {cmd}")
-        print("  [y] Approve once   [a] Approve for this session   [n] Deny")
-        try:
-            answer = input("  Your choice [y/a/n]: ").strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            answer = "n"
-
-        if answer == "a":
-            _SESSION_ALLOWED_COMMANDS.add(cmd)
-            return PermissionRequestResult(kind="approved")
-        if answer == "y":
-            return PermissionRequestResult(kind="approved")
-        print("  Command denied.")
-        return PermissionRequestResult(kind="denied-interactively-by-user")
+    def handler(request, invocation):
+        return _decision_approve_once()
 
     return handler
+
+
+async def _prompt_for_command(cmd: str) -> str:
+    """Prompt the user once for a shell command and return y/a/n."""
+    print(f"\n[Permission required] The agent wants to run:\n  {cmd}")
+    print("  [y] Approve once   [a] Approve for this session   [n] Deny")
+    try:
+        answer = await asyncio.to_thread(input, "  Your choice [y/a/n]: ")
+    except (EOFError, KeyboardInterrupt):
+        return "n"
+    return answer.strip().lower()
+
+
+def _build_session_hooks() -> dict[str, Any]:
+    """Return hooks that keep tool permission control in one place.
+
+    The CLI's custom on_permission_request handler is the only approval gate.
+    We explicitly allow tool execution in pre-tool hooks so the runtime does not
+    apply a second implicit ask/deny step for tools such as `bash`.
+    """
+
+    async def on_pre_tool_use(input_data: dict[str, Any], invocation: dict[str, Any]):
+        tool_name = str(input_data.get("toolName", ""))
+        if tool_name not in {"shell", "bash"}:
+            return {"permissionDecision": "allow"}
+
+        tool_args = input_data.get("toolArgs") or {}
+        cmd = ""
+        if isinstance(tool_args, dict):
+            cmd = (
+                str(tool_args.get("command") or "")
+                or str(tool_args.get("full_command_text") or "")
+                or str(tool_args.get("input") or "")
+            )
+        if not cmd:
+            cmd = json.dumps(tool_args, ensure_ascii=True)
+
+        if cmd in _SESSION_ALLOWED_COMMANDS:
+            return {"permissionDecision": "allow"}
+
+        answer = await _prompt_for_command(cmd)
+        if answer == "a":
+            _SESSION_ALLOWED_COMMANDS.add(cmd)
+            return {"permissionDecision": "allow"}
+        if answer == "y":
+            return {"permissionDecision": "allow"}
+        print("  Command denied.")
+        return {
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "Denied by user",
+        }
+
+    async def on_post_tool_use_failure(input_data: dict[str, Any], invocation: dict[str, Any]):
+        return None
+
+    return {
+        "on_pre_tool_use": on_pre_tool_use,
+        "on_post_tool_use_failure": on_post_tool_use_failure,
+    }
 
 
 @dataclass
@@ -88,6 +172,7 @@ class TurnState:
     deltas: list[str]
     messages: list[str]
     errors: list[str]
+    tool_calls: dict[str, str]
 
 
 class CliRunner:
@@ -112,11 +197,38 @@ class CliRunner:
                         sys.stdout.flush()
             case AssistantMessageData() as data:
                 self._active_turn.messages.append(data.content)
+            case ToolExecutionStartData() as data:
+                self._active_turn.tool_calls[data.tool_call_id] = data.tool_name
+            case ToolExecutionCompleteData() as data:
+                if data.success:
+                    return
+
+                tool_name = self._active_turn.tool_calls.get(data.tool_call_id, "tool")
+                error_bits: list[str] = [f"{tool_name} failed"]
+
+                if data.error and getattr(data.error, "message", None):
+                    error_bits.append(str(data.error.message))
+
+                result = getattr(data, "result", None)
+                if result is not None:
+                    detailed = getattr(result, "detailed_content", None)
+                    content = getattr(result, "content", None)
+                    extra = detailed or content
+                    if extra:
+                        compact = " ".join(str(extra).split())
+                        error_bits.append(compact[:400])
+
+                self._active_turn.errors.append(": ".join(error_bits))
+            case PermissionCompletedData() as data:
+                result = getattr(data, "result", None)
+                result_name = type(result).__name__ if result is not None else "UnknownPermissionResult"
+                if "Denied" in result_name or "Cancelled" in result_name:
+                    self._active_turn.errors.append(f"permission result: {result_name}")
             case SessionErrorData() as data:
                 self._active_turn.errors.append(f"{data.error_type}: {data.message}")
 
     async def ask(self, query: str) -> dict[str, Any]:
-        self._active_turn = TurnState(deltas=[], messages=[], errors=[])
+        self._active_turn = TurnState(deltas=[], messages=[], errors=[], tool_calls={})
         try:
             await self.session.send_and_wait(query)
         finally:
@@ -150,6 +262,60 @@ def _normalize_auth_env() -> None:
         os.environ["COPILOT_GITHUB_TOKEN"] = token
 
 
+def _build_runtime_env() -> dict[str, str]:
+    """Forward key environment variables to the Copilot runtime process.
+
+    This keeps shell tools (notably `az`) in the same auth/context as the
+    current terminal session.
+    """
+    env_keys = [
+        "PATH",
+        "HOME",
+        "SHELL",
+        "USER",
+        "LANG",
+        "TERM",
+        "AZURE_CONFIG_DIR",
+        "AZURE_TENANT_ID",
+        "AZURE_CLIENT_ID",
+        "AZURE_SUBSCRIPTION_ID",
+        "COPILOT_GITHUB_TOKEN",
+        "GH_TOKEN",
+        "GITHUB_TOKEN",
+    ]
+
+    env: dict[str, str] = {}
+    for key in env_keys:
+        val = os.getenv(key)
+        if val:
+            env[key] = val
+
+    # If caller didn't set AZURE_CONFIG_DIR, default to the current user's profile.
+    env.setdefault("AZURE_CONFIG_DIR", os.path.expanduser("~/.azure"))
+    return env
+
+
+def _create_copilot_client() -> CopilotClient:
+    """Create CopilotClient in a way that works across SDK versions.
+
+    Some SDK builds support CopilotClient(env=...), others do not.
+    """
+    kwargs: dict[str, Any] = {}
+    try:
+        sig = inspect.signature(CopilotClient)
+        if "env" in sig.parameters:
+            kwargs["env"] = _build_runtime_env()
+    except Exception:
+        # If signature introspection fails, fall back to default constructor.
+        kwargs = {}
+
+    try:
+        return CopilotClient(**kwargs)
+    except TypeError:
+        # Backward/forward compatibility fallback for mismatched constructor args.
+        return CopilotClient()
+
+
 def _build_provider_config() -> Optional[dict[str, Any]]:
     """Optional Azure OpenAI provider config from environment variables."""
     endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
@@ -177,7 +343,11 @@ def _build_provider_config() -> Optional[dict[str, Any]]:
 
 def _validate_auth_inputs() -> None:
     """Fail fast with actionable guidance when auth is missing."""
-    has_gh_token = bool(os.getenv("GITHUB_TOKEN"))
+    has_gh_token = bool(
+        os.getenv("COPILOT_GITHUB_TOKEN")
+        or os.getenv("GH_TOKEN")
+        or os.getenv("GITHUB_TOKEN")
+    )
     has_azure_provider = bool(os.getenv("AZURE_OPENAI_ENDPOINT"))
     if has_gh_token or has_azure_provider:
         return
@@ -281,12 +451,14 @@ async def _interactive_loop(state: CliState) -> int:
 
     _validate_auth_inputs()
     _normalize_auth_env()
-    client = CopilotClient()
+    client = _create_copilot_client()
     await client.start()
 
     session_kwargs: dict[str, Any] = {
+        "hooks": _build_session_hooks(),
         "on_permission_request": _make_permission_handler(),
         "streaming": state.stream,
+        "working_directory": os.getcwd(),
         "system_message": {
             "content": "Follow workspace instructions and use available skills for task execution."
         },
@@ -373,12 +545,14 @@ async def _main_async(args: argparse.Namespace) -> int:
 
     _validate_auth_inputs()
     _normalize_auth_env()
-    client = CopilotClient()
+    client = _create_copilot_client()
     await client.start()
 
     session_kwargs: dict[str, Any] = {
+        "hooks": _build_session_hooks(),
         "on_permission_request": _make_permission_handler(),
         "streaming": state.stream,
+        "working_directory": os.getcwd(),
         "system_message": {
             "content": "Follow workspace instructions and use available skills for task execution."
         },
