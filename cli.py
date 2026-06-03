@@ -38,7 +38,7 @@ from copilot.session import PermissionHandler
 import copilot.generated.rpc as rpc
 
 # Skills bundled with this CLI — auto-loaded unless overridden.
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+_REPO_ROOT = Path(__file__).resolve().parent
 _DEFAULT_SKILL_DIRS = [str(_REPO_ROOT / "skills")]
 
 # Shared interactive input state.
