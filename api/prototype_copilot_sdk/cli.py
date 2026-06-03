@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import atexit
 import inspect
 import json
 import os
@@ -39,6 +40,32 @@ import copilot.generated.rpc as rpc
 # Skills bundled with this CLI — auto-loaded unless overridden.
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _DEFAULT_SKILL_DIRS = [str(_REPO_ROOT / "skills")]
+
+
+def _setup_readline_history() -> None:
+    """Enable interactive line editing and persistent history on Unix."""
+    try:
+        import readline  # type: ignore
+    except Exception:
+        return
+
+    history_path = os.path.join(os.path.expanduser("~"), ".copilot-skills-cli-history")
+
+    try:
+        if os.path.exists(history_path):
+            readline.read_history_file(history_path)
+    except Exception:
+        pass
+
+    readline.set_history_length(1000)
+
+    def _save_history() -> None:
+        try:
+            readline.write_history_file(history_path)
+        except Exception:
+            pass
+
+    atexit.register(_save_history)
 
 
 # Shell commands that the user has approved for the current session.
@@ -588,6 +615,7 @@ async def _main_async(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
+    _setup_readline_history()
     parser = _build_parser()
     args = parser.parse_args()
     try:
