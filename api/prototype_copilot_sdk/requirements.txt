@@ -1,6 +1,2 @@
-azure-identity
 github-copilot-sdk>=0.3.0
-fastapi
-uvicorn[standard]
-pydantic>=2.0
 prompt_toolkit>=3.0
