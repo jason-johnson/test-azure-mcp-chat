@@ -49,6 +49,9 @@ _PROMPT_HINTS = [
     "/stream off",
     "/json on",
     "/json off",
+    "/suggest",
+    "/suggest subscriptions",
+    "/suggest web apps",
     "list my subscriptions",
     "list resource groups",
     "list web apps",
@@ -511,6 +514,7 @@ def _print_interactive_help() -> None:
     print("\nCommands:")
     print("  /stream on|off             Toggle streaming")
     print("  /json on|off               Toggle JSON output")
+    print("  /suggest [topic]           Ask AI for likely next prompts")
     print("  /help                      Show this help")
     print("  /exit                      Quit")
 
@@ -536,8 +540,37 @@ def _handle_command(raw: str, state: CliState) -> bool:
         print(f"json output set to {state.json_output}")
         return True
 
+    if cmd == "/suggest":
+        # Handled asynchronously in the interactive loop.
+        return False
+
     print("unknown command. type /help")
     return True
+
+
+async def _handle_suggest_command(
+    raw: str,
+    runner: "CliRunner",
+    json_output: bool,
+    stream: bool,
+) -> None:
+    """Generate suggested next prompts using the current model session."""
+    topic = raw[len("/suggest"):].strip()
+    topic_clause = f"Focus on: {topic}." if topic else "Focus on Azure operations in this workspace."
+
+    suggest_prompt = (
+        "Generate exactly 6 concise next prompts the user could ask in this CLI. "
+        "Each suggestion must be one line, actionable, and specific. "
+        "Do not run tools or shell commands. Do not ask for permission. "
+        "Return plain text as a numbered list only. "
+        f"{topic_clause}"
+    )
+
+    payload = await runner.ask(suggest_prompt)
+    if json_output:
+        print(json.dumps(payload, indent=2, ensure_ascii=True))
+    elif not stream:
+        _print_human_result(payload)
 
 
 async def _interactive_loop(state: CliState) -> int:
@@ -601,6 +634,20 @@ async def _interactive_loop(state: CliState) -> int:
                 continue
 
             if text.startswith("/"):
+                if text.startswith("/suggest"):
+                    if not state.stream:
+                        print("Assistant>")
+                    try:
+                        await _handle_suggest_command(
+                            raw=text,
+                            runner=runner,
+                            json_output=state.json_output,
+                            stream=state.stream,
+                        )
+                    except Exception as ex:
+                        print(f"Error: {ex}", file=sys.stderr)
+                    continue
+
                 try:
                     _handle_command(text, state)
                     runner.stream = state.stream
