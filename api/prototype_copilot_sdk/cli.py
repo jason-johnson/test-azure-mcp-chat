@@ -41,6 +41,10 @@ import copilot.generated.rpc as rpc
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _DEFAULT_SKILL_DIRS = [str(_REPO_ROOT / "skills")]
 
+# Shared interactive input state.
+_INTERACTIVE_PROMPT_SESSION: Any = None
+_INPUT_LOCK: Optional[asyncio.Lock] = None
+
 # Shared prompt suggestions for interactive input completion.
 _PROMPT_HINTS = [
     "/help",
@@ -99,6 +103,13 @@ def _setup_readline_history() -> None:
     atexit.register(_save_history)
 
 
+def _get_input_lock() -> asyncio.Lock:
+    global _INPUT_LOCK
+    if _INPUT_LOCK is None:
+        _INPUT_LOCK = asyncio.Lock()
+    return _INPUT_LOCK
+
+
 def _build_prompt_session() -> Any:
     """Build a prompt_toolkit session when available.
 
@@ -136,9 +147,10 @@ def _build_prompt_session() -> Any:
 
 async def _read_user_input(prompt_session: Any, prompt_text: str) -> str:
     """Read user input using prompt_toolkit when present, else plain input."""
-    if prompt_session is not None:
-        return await prompt_session.prompt_async(prompt_text)
-    return await asyncio.to_thread(input, prompt_text)
+    async with _get_input_lock():
+        if prompt_session is not None:
+            return await prompt_session.prompt_async(prompt_text)
+        return await asyncio.to_thread(input, prompt_text)
 
 
 # Shell commands that the user has approved for the current session.
@@ -205,7 +217,10 @@ async def _prompt_for_command(cmd: str) -> str:
     print(f"\n[Permission required] The agent wants to run:\n  {cmd}")
     print("  [y] Approve once   [a] Approve for this session   [n] Deny")
     try:
-        answer = await asyncio.to_thread(input, "  Your choice [y/a/n]: ")
+        answer = await _read_user_input(
+            _INTERACTIVE_PROMPT_SESSION,
+            "  Your choice [y/a/n]: ",
+        )
     except (EOFError, KeyboardInterrupt):
         return "n"
     return answer.strip().lower()
@@ -574,6 +589,8 @@ async def _handle_suggest_command(
 
 
 async def _interactive_loop(state: CliState) -> int:
+    global _INTERACTIVE_PROMPT_SESSION
+
     print("Copilot Skills CLI")
     selected_model = state.model if state.model else "default"
     print(f"model={selected_model} stream={state.stream} json={state.json_output}")
@@ -619,12 +636,12 @@ async def _interactive_loop(state: CliState) -> int:
 
     runner = CliRunner(session=session, stream=state.stream)
     session.on(runner.on_event)
-    prompt_session = _build_prompt_session()
+    _INTERACTIVE_PROMPT_SESSION = _build_prompt_session()
 
     try:
         while True:
             try:
-                user_input = await _read_user_input(prompt_session, "\nYou> ")
+                user_input = await _read_user_input(_INTERACTIVE_PROMPT_SESSION, "\nYou> ")
             except (EOFError, KeyboardInterrupt):
                 print("\nbye")
                 return 0
@@ -671,6 +688,7 @@ async def _interactive_loop(state: CliState) -> int:
             elif not state.stream:
                 _print_human_result(payload)
     finally:
+        _INTERACTIVE_PROMPT_SESSION = None
         await session.disconnect()
         await client.stop()
 
