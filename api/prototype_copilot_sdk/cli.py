@@ -41,6 +41,20 @@ import copilot.generated.rpc as rpc
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _DEFAULT_SKILL_DIRS = [str(_REPO_ROOT / "skills")]
 
+# Shared prompt suggestions for interactive input completion.
+_PROMPT_HINTS = [
+    "/help",
+    "/exit",
+    "/stream on",
+    "/stream off",
+    "/json on",
+    "/json off",
+    "list my subscriptions",
+    "list resource groups",
+    "list web apps",
+    "show my current account",
+]
+
 
 def _setup_readline_history() -> None:
     """Enable interactive line editing and persistent history on Unix."""
@@ -59,6 +73,20 @@ def _setup_readline_history() -> None:
 
     readline.set_history_length(1000)
 
+    def _completer(text: str, state: int):
+        buffer = readline.get_line_buffer() if hasattr(readline, "get_line_buffer") else ""
+        options = [item for item in _PROMPT_HINTS if item.startswith(buffer)]
+        if state < len(options):
+            return options[state]
+        return None
+
+    try:
+        readline.set_completer_delims(" \t\n")
+        readline.set_completer(_completer)
+        readline.parse_and_bind("tab: complete")
+    except Exception:
+        pass
+
     def _save_history() -> None:
         try:
             readline.write_history_file(history_path)
@@ -66,6 +94,48 @@ def _setup_readline_history() -> None:
             pass
 
     atexit.register(_save_history)
+
+
+def _build_prompt_session() -> Any:
+    """Build a prompt_toolkit session when available.
+
+    Returns None if prompt_toolkit is unavailable so the caller can fall back
+    to plain input().
+    """
+    try:
+        from prompt_toolkit import PromptSession
+        from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
+        from prompt_toolkit.completion import FuzzyCompleter, WordCompleter
+        from prompt_toolkit.history import FileHistory
+        from prompt_toolkit.key_binding import KeyBindings
+    except Exception:
+        return None
+
+    history_path = os.path.join(os.path.expanduser("~"), ".copilot-skills-cli-history")
+    key_bindings = KeyBindings()
+
+    @key_bindings.add("c-space")
+    def _trigger_completion(event) -> None:
+        event.app.current_buffer.start_completion(select_first=False)
+
+    completer = FuzzyCompleter(
+        WordCompleter(_PROMPT_HINTS, ignore_case=True, sentence=True)
+    )
+
+    return PromptSession(
+        history=FileHistory(history_path),
+        auto_suggest=AutoSuggestFromHistory(),
+        completer=completer,
+        key_bindings=key_bindings,
+        complete_while_typing=False,
+    )
+
+
+async def _read_user_input(prompt_session: Any, prompt_text: str) -> str:
+    """Read user input using prompt_toolkit when present, else plain input."""
+    if prompt_session is not None:
+        return await prompt_session.prompt_async(prompt_text)
+    return await asyncio.to_thread(input, prompt_text)
 
 
 # Shell commands that the user has approved for the current session.
@@ -516,11 +586,12 @@ async def _interactive_loop(state: CliState) -> int:
 
     runner = CliRunner(session=session, stream=state.stream)
     session.on(runner.on_event)
+    prompt_session = _build_prompt_session()
 
     try:
         while True:
             try:
-                user_input = await asyncio.to_thread(input, "\nYou> ")
+                user_input = await _read_user_input(prompt_session, "\nYou> ")
             except (EOFError, KeyboardInterrupt):
                 print("\nbye")
                 return 0
