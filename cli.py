@@ -16,8 +16,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import atexit
+import hashlib
 import inspect
 import json
+import logging
 import os
 import sys
 from dataclasses import dataclass
@@ -61,6 +63,56 @@ _PROMPT_HINTS = [
     "list web apps",
     "show my current account",
 ]
+
+_LOG = logging.getLogger("copilot_skills_cli")
+_TELEMETRY_ENABLED = False
+
+
+def _command_fingerprint(cmd: str) -> str:
+    """Return a stable, non-reversible fingerprint for a command string."""
+    digest = hashlib.sha256(cmd.encode("utf-8", errors="ignore")).hexdigest()[:12]
+    return f"len={len(cmd)} sha={digest}"
+
+
+def _log_event(event_name: str, **fields: Any) -> None:
+    """Emit safe structured diagnostics to logging sinks.
+
+    This writes JSON payloads so they can be queried in App Insights when
+    telemetry is enabled.
+    """
+    safe_fields: dict[str, Any] = {}
+    for key, value in fields.items():
+        if isinstance(value, str):
+            safe_fields[key] = value[:300]
+        elif isinstance(value, (int, float, bool)) or value is None:
+            safe_fields[key] = value
+        else:
+            safe_fields[key] = str(value)[:300]
+
+    _LOG.info("event=%s data=%s", event_name, json.dumps(safe_fields, ensure_ascii=True))
+
+
+def _init_telemetry() -> None:
+    """Initialize optional Azure Monitor telemetry.
+
+    Enabled only when APPLICATIONINSIGHTS_CONNECTION_STRING is present.
+    """
+    global _TELEMETRY_ENABLED
+
+    conn = os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING")
+    if not conn:
+        return
+
+    try:
+        from azure.monitor.opentelemetry import configure_azure_monitor
+
+        configure_azure_monitor(connection_string=conn)
+        logging.getLogger().setLevel(logging.INFO)
+        _TELEMETRY_ENABLED = True
+        _log_event("telemetry_enabled")
+    except Exception as ex:
+        print(f"Warning: telemetry initialization failed: {ex}", file=sys.stderr)
+        _TELEMETRY_ENABLED = False
 
 
 def _setup_readline_history() -> None:
@@ -214,6 +266,7 @@ def _make_permission_handler():
 
 async def _prompt_for_command(cmd: str) -> str:
     """Prompt the user once for a shell command and return y/a/n."""
+    _log_event("permission_prompt", command_fingerprint=_command_fingerprint(cmd))
     print(f"\n[Permission required] The agent wants to run:\n  {cmd}")
     print("  [y] Approve once   [a] Approve for this session   [n] Deny")
     try:
@@ -222,8 +275,11 @@ async def _prompt_for_command(cmd: str) -> str:
             "  Your choice [y/a/n]: ",
         )
     except (EOFError, KeyboardInterrupt):
+        _log_event("permission_decision", decision="n", reason="interrupt")
         return "n"
-    return answer.strip().lower()
+    decision = answer.strip().lower()
+    _log_event("permission_decision", decision=decision)
+    return decision
 
 
 def _build_session_hooks() -> dict[str, Any]:
@@ -236,6 +292,7 @@ def _build_session_hooks() -> dict[str, Any]:
 
     async def on_pre_tool_use(input_data: dict[str, Any], invocation: dict[str, Any]):
         tool_name = str(input_data.get("toolName", ""))
+        _log_event("tool_pre_use", tool_name=tool_name)
         if tool_name not in {"shell", "bash"}:
             return {"permissionDecision": "allow"}
 
@@ -251,21 +308,30 @@ def _build_session_hooks() -> dict[str, Any]:
             cmd = json.dumps(tool_args, ensure_ascii=True)
 
         if cmd in _SESSION_ALLOWED_COMMANDS:
+            _log_event("permission_auto_allow", command_fingerprint=_command_fingerprint(cmd), scope="session")
             return {"permissionDecision": "allow"}
 
         answer = await _prompt_for_command(cmd)
         if answer == "a":
             _SESSION_ALLOWED_COMMANDS.add(cmd)
+            _log_event("permission_allow", command_fingerprint=_command_fingerprint(cmd), scope="session")
             return {"permissionDecision": "allow"}
         if answer == "y":
+            _log_event("permission_allow", command_fingerprint=_command_fingerprint(cmd), scope="once")
             return {"permissionDecision": "allow"}
         print("  Command denied.")
+        _log_event("permission_deny", command_fingerprint=_command_fingerprint(cmd))
         return {
             "permissionDecision": "deny",
             "permissionDecisionReason": "Denied by user",
         }
 
     async def on_post_tool_use_failure(input_data: dict[str, Any], invocation: dict[str, Any]):
+        _log_event(
+            "tool_failure_hook",
+            tool_name=input_data.get("toolName"),
+            error=input_data.get("error"),
+        )
         return None
 
     return {
@@ -316,6 +382,7 @@ class CliRunner:
                 self._active_turn.tool_calls[data.tool_call_id] = data.tool_name
             case ToolExecutionCompleteData() as data:
                 if data.success:
+                    _log_event("tool_complete", tool_call_id=data.tool_call_id, success=True)
                     return
 
                 tool_name = self._active_turn.tool_calls.get(data.tool_call_id, "tool")
@@ -334,13 +401,22 @@ class CliRunner:
                         error_bits.append(compact[:400])
 
                 self._active_turn.errors.append(": ".join(error_bits))
+                _log_event(
+                    "tool_complete",
+                    tool_call_id=data.tool_call_id,
+                    success=False,
+                    tool_name=tool_name,
+                    error=": ".join(error_bits),
+                )
             case PermissionCompletedData() as data:
                 result = getattr(data, "result", None)
                 result_name = type(result).__name__ if result is not None else "UnknownPermissionResult"
+                _log_event("permission_completed", result=result_name)
                 if "Denied" in result_name or "Cancelled" in result_name:
                     self._active_turn.errors.append(f"permission result: {result_name}")
             case SessionErrorData() as data:
                 self._active_turn.errors.append(f"{data.error_type}: {data.message}")
+                _log_event("session_error", error_type=data.error_type, message=data.message)
 
     async def ask(self, query: str) -> dict[str, Any]:
         self._active_turn = TurnState(deltas=[], messages=[], errors=[], tool_calls={})
@@ -594,11 +670,16 @@ async def _interactive_loop(state: CliState) -> int:
     print("Copilot Skills CLI")
     selected_model = state.model if state.model else "default"
     print(f"model={selected_model} stream={state.stream} json={state.json_output}")
+    if _TELEMETRY_ENABLED:
+        print("logging=on (Application Insights)")
+    else:
+        print("logging=off")
     _print_interactive_help()
 
     _validate_auth_inputs()
     _normalize_auth_env()
     client = _create_copilot_client()
+    _log_event("session_start", mode="interactive", telemetry_enabled=_TELEMETRY_ENABLED)
     await client.start()
 
     session_kwargs: dict[str, Any] = {
@@ -626,8 +707,10 @@ async def _interactive_loop(state: CliState) -> int:
 
     try:
         session = await client.create_session(**session_kwargs)
+        _log_event("session_created", mode="interactive")
     except Exception as ex:
         await client.stop()
+        _log_event("session_create_failed", mode="interactive", error=ex)
         raise RuntimeError(
             f"Failed to create session: {ex}. "
             "If this is a model availability issue, retry without --model "
@@ -678,9 +761,11 @@ async def _interactive_loop(state: CliState) -> int:
 
             try:
                 payload = await runner.ask(text)
+                _log_event("turn_complete", mode="interactive", error_count=len(payload.get("errors") or []))
             except Exception as ex:
                 # Keep interactive mode alive on per-turn failures.
                 print(f"Error: {ex}", file=sys.stderr)
+                _log_event("turn_failed", mode="interactive", error=ex)
                 continue
 
             if state.json_output:
@@ -689,6 +774,7 @@ async def _interactive_loop(state: CliState) -> int:
                 _print_human_result(payload)
     finally:
         _INTERACTIVE_PROMPT_SESSION = None
+        _log_event("session_end", mode="interactive")
         await session.disconnect()
         await client.stop()
 
@@ -709,6 +795,7 @@ async def _main_async(args: argparse.Namespace) -> int:
     _validate_auth_inputs()
     _normalize_auth_env()
     client = _create_copilot_client()
+    _log_event("session_start", mode="oneshot", telemetry_enabled=_TELEMETRY_ENABLED)
     await client.start()
 
     session_kwargs: dict[str, Any] = {
@@ -735,22 +822,26 @@ async def _main_async(args: argparse.Namespace) -> int:
         session_kwargs["provider"] = provider
 
     session = await client.create_session(**session_kwargs)
+    _log_event("session_created", mode="oneshot")
     runner = CliRunner(session=session, stream=state.stream)
     session.on(runner.on_event)
 
     try:
         payload = await runner.ask(args.query)
+        _log_event("turn_complete", mode="oneshot", error_count=len(payload.get("errors") or []))
         if state.json_output:
             print(json.dumps(payload, indent=2, ensure_ascii=True))
         elif not state.stream:
             _print_human_result(payload)
         return 0
     finally:
+        _log_event("session_end", mode="oneshot")
         await session.disconnect()
         await client.stop()
 
 
 def main() -> int:
+    _init_telemetry()
     _setup_readline_history()
     parser = _build_parser()
     args = parser.parse_args()

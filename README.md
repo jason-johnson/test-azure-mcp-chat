@@ -44,6 +44,29 @@ Example:
 export GH_TOKEN=your_token_here
 ```
 
+## Telemetry and Diagnostics
+
+Telemetry is **off by default**.
+
+To send diagnostics to Application Insights, set:
+
+```bash
+export APPLICATIONINSIGHTS_CONNECTION_STRING="InstrumentationKey=...;IngestionEndpoint=..."
+```
+
+When enabled, the CLI exports operational diagnostics (via Azure Monitor OpenTelemetry), including:
+
+- session start/end
+- session creation success/failure
+- permission prompts and allow/deny decisions
+- tool execution failures
+- session/model errors
+
+Safety notes:
+
+- full shell command text is not logged; only a non-reversible fingerprint and length
+- no diagnostics are exported unless the connection string is set
+
 Alternative provider mode (optional):
 
 - `AZURE_OPENAI_ENDPOINT`
@@ -159,6 +182,17 @@ If needed:
 ```bash
 az login
 ```
+
+### Telemetry doesn't appear in App Insights
+
+Verify environment and dependency:
+
+```bash
+python3 -m pip install -r requirements.txt
+echo "$APPLICATIONINSIGHTS_CONNECTION_STRING"
+```
+
+Then restart the CLI process so telemetry initialization runs on startup.
 
 ## Notes
 
