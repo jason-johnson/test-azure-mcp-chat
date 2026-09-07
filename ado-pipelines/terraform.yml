@@ -38,49 +38,62 @@ parameters:
     default: []
 
 steps:
-  - task: JasonBJohnson.azure-pipelines-tasks-terraform.azure-pipelines-tasks-terraform-installer.TerraformInstaller@1
+  - task: ms-devlabs.custom-terraform-tasks.custom-terraform-installer-task.TerraformInstaller@1
     displayName: Install Terraform
     inputs:
       terraformVersion: ${{ parameters.terraformVersion }}
   
-  - task: TerraformCLI@1
+  - task: TerraformTask@5
     displayName: 'terraform init'
     inputs:
       command: init
-      backendType: azurerm
+      provider: azurerm
       backendServiceArm: ${{ parameters.servicePrinciple }}
       backendAzureRmResourceGroupName: ${{ parameters.resourceGroupName }}
       backendAzureRmStorageAccountName: ${{ parameters.storageAccountName }}
       backendAzureRmContainerName: ${{ parameters.containerName }}
       backendAzureRmKey: terraform.tfstate
-      runAzLogin: true
       workingDirectory: ${{ parameters.terraformPath }}
 
   - ${{ if eq(parameters.useWorkspace, true) }}:
-    - task: TerraformCLI@1
-      displayName: Create Workspace
-      inputs:
-        workingDirectory: ${{ parameters.terraformPath }}
-        command: workspace
-        workspaceSubCommand: new
-        workspaceName: ${{ parameters.workspace }}
-        skipExistingWorkspace: true
-
-    - task: TerraformCLI@1
+    - task: TerraformTask@5
       displayName: Select Workspace
       inputs:
+        provider: azurerm
         workingDirectory: ${{ parameters.terraformPath }}
-        command: workspace
-        workspaceSubCommand: select
-        workspaceName: ${{ parameters.workspace }}
+        command: custom
+        customCommand: workspace
+        commandOptions: 'select -or-create "${{ parameters.workspace }}"'
+        environmentServiceNameAzureRM: ${{ parameters.servicePrinciple }}
+        environmentAzureRmUseIdTokenGeneration: true
 
   - ${{ if or(gt(length(parameters.preDestroySteps), 0), gt(length(parameters.preActionSteps), 0)) }}:
-    - task: TerraformCLI@1
+    - task: TerraformTask@5
+      name: TerraformPreOutputs
       displayName: 'terraform output'
       inputs:
+        provider: azurerm
         command: output
-        environmentServiceName: ${{ parameters.servicePrinciple }}
+        environmentServiceNameAzureRM: ${{ parameters.servicePrinciple }}
+        environmentAzureRmUseIdTokenGeneration: true
         workingDirectory: ${{ parameters.terraformPath }}
+
+    - powershell: |
+        $outputs = Get-Content -Raw -LiteralPath $env:TERRAFORM_OUTPUTS_PATH | ConvertFrom-Json
+        foreach ($output in $outputs.PSObject.Properties) {
+          $name = "TF_OUT_$($output.Name.ToUpperInvariant())"
+          $value = if ($output.Value.type -is [string] -and $output.Value.type -eq 'string') {
+            [string]$output.Value.value
+          } else {
+            ConvertTo-Json -InputObject $output.Value.value -Depth 100 -Compress
+          }
+          $value = $value.Replace('%', '%AZP25').Replace("`r", '%0D').Replace("`n", '%0A')
+          $secret = ([bool]$output.Value.sensitive).ToString().ToLowerInvariant()
+          Write-Host "##vso[task.setvariable variable=$name;issecret=$secret]$value"
+        }
+      displayName: Set Pre-Action Outputs
+      env:
+        TERRAFORM_OUTPUTS_PATH: $(TerraformPreOutputs.jsonOutputVariablesPath)
 
   - ${{ each step in parameters.preActionSteps }}:
     - ${{ each pair in step }}:
@@ -97,12 +110,13 @@ steps:
           ${{ pair.key }}: ${{ pair.value }}
 
   - ${{ if and(ne(parameters.action, 'apply'), ne(parameters.action, 'output')) }}:
-    - task: TerraformCLI@1
+    - task: TerraformTask@5
       displayName: 'terraform ${{ parameters.action }}'
       inputs:
+        provider: azurerm
         command: ${{ parameters.action }}
-        environmentServiceName: ${{ parameters.servicePrinciple }}
-        runAzLogin: true
+        environmentServiceNameAzureRM: ${{ parameters.servicePrinciple }}
+        environmentAzureRmUseIdTokenGeneration: true
         workingDirectory: ${{ parameters.terraformPath }}
         commandOptions: ${{ parameters.commandOptions }}
       env:
@@ -112,39 +126,51 @@ steps:
           ${{ pair.key }}: ${{ pair.value }}
 
   - ${{ if and(eq(parameters.action, 'destroy'), eq(parameters.useWorkspace, true)) }}:
-    - task: TerraformCLI@1
+    - task: TerraformTask@5
       displayName: Select Workspace
       inputs:
+        provider: azurerm
         workingDirectory: ${{ parameters.terraformPath }}
-        command: workspace
-        workspaceSubCommand: select
-        workspaceName: 'default'
+        command: custom
+        customCommand: workspace
+        commandOptions: 'select default'
+        environmentServiceNameAzureRM: ${{ parameters.servicePrinciple }}
+        environmentAzureRmUseIdTokenGeneration: true
 
-# TODO: TerraformCli does not support deleting a workspace, when it does replace this with the task
-    - powershell: |
-        terraform workspace delete ${{ parameters.workspace }}
+    - task: TerraformTask@5
       displayName: Destroy Workspace
-      workingDirectory: ${{ parameters.terraformPath }}
+      inputs:
+        provider: azurerm
+        workingDirectory: ${{ parameters.terraformPath }}
+        command: custom
+        customCommand: workspace
+        commandOptions: 'delete "${{ parameters.workspace }}"'
+        environmentServiceNameAzureRM: ${{ parameters.servicePrinciple }}
+        environmentAzureRmUseIdTokenGeneration: true
 
   - ${{ if eq(parameters.action, 'apply') }}:
-    - task: TerraformCLI@1
+    - task: TerraformTask@5
+      name: TerraformPlan
       displayName: 'terraform plan'
       inputs:
+        provider: azurerm
         command: plan
-        environmentServiceName: ${{ parameters.servicePrinciple }}
-        runAzLogin: true
+        environmentServiceNameAzureRM: ${{ parameters.servicePrinciple }}
+        environmentAzureRmUseIdTokenGeneration: true
         workingDirectory: ${{ parameters.terraformPath }}
-        commandOptions: '${{ parameters.commandOptions }} -out=$(System.DefaultWorkingDirectory)/terraform.tfplan -detailed-exitcode'
-        publishPlanResults: 'sds'
+        commandOptions: '${{ parameters.commandOptions }} -out="$(System.DefaultWorkingDirectory)/terraform.tfplan"'
+        publishPlan: 'sds'
       env:
         ${{ each secret in parameters.secrets }}:
           TF_VAR_${{ secret }}: $(${{ secret }})
         ${{ each pair in parameters.env }}:
           ${{ pair.key }}: ${{ pair.value }}
 
-    # TODO: This is only needed because there is currently a bug in the show command for TerraformCLI.  What that is fixed replace this with it
     - powershell: |
-        $plan = terraform show -json $(System.DefaultWorkingDirectory)/terraform.tfplan | ConvertFrom-Json
+        $planJson = terraform show -json "$(System.DefaultWorkingDirectory)/terraform.tfplan"
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        $plan = $planJson | ConvertFrom-Json
+        Write-Host "##vso[task.setvariable variable=TERRAFORM_PLAN_HAS_DESTROY_CHANGES]false"
 
         foreach ($resourceChange in $plan.resource_changes) {
           if  ($resourceChange.change.actions.Contains("delete")) {
@@ -160,32 +186,42 @@ steps:
           ${{ pair.key }}: ${{ pair.value }}
         condition: and(succeeded(), eq(variables['TERRAFORM_PLAN_HAS_DESTROY_CHANGES'], 'true'))
 
-    - task: TerraformCLI@1
+    - task: TerraformTask@5
       displayName: 'terraform apply'
-      condition: and(succeeded(), eq(variables['TERRAFORM_PLAN_HAS_CHANGES'], 'true'))
+      condition: and(succeeded(), eq(variables['TerraformPlan.changesPresent'], 'true'))
       inputs:
+        provider: azurerm
         command: apply
-        environmentServiceName: ${{ parameters.servicePrinciple }}
-        runAzLogin: true
+        environmentServiceNameAzureRM: ${{ parameters.servicePrinciple }}
+        environmentAzureRmUseIdTokenGeneration: true
         workingDirectory: ${{ parameters.terraformPath }}
-        commandOptions: '$(System.DefaultWorkingDirectory)/terraform.tfplan'
+        commandOptions: '"$(System.DefaultWorkingDirectory)/terraform.tfplan"'
 
   - ${{ if or(eq(parameters.action, 'apply'), eq(parameters.action, 'output')) }}:
-    - task: TerraformCLI@1
+    - task: TerraformTask@5
+      name: TerraformOutputs
       displayName: 'terraform output'
       inputs:
+        provider: azurerm
         command: output
-        environmentServiceName: ${{ parameters.servicePrinciple }}
+        environmentServiceNameAzureRM: ${{ parameters.servicePrinciple }}
+        environmentAzureRmUseIdTokenGeneration: true
         workingDirectory: ${{ parameters.terraformPath }}
 
-# TODO: terraform output currently has a bug that variables it produces are not passed to other jobs
-# TODO:  When that bug is fixed, remove the below
     - powershell: |
-        $vars = Get-ChildItem Env:* | select Name,Value | where Name -like "TF_OUT_*"
-        foreach ($var in $vars) {
-          $name = ($var.Name -replace "^TF_OUT_").ToLower() 
-          Write-Host "##vso[task.setvariable variable=$name;isOutput=true]$($var.Value)"
-          Write-Host "[task.setvariable variable=$name;isOutput=true;]$($var.Value)"
+        $outputs = Get-Content -Raw -LiteralPath $env:TERRAFORM_OUTPUTS_PATH | ConvertFrom-Json
+        foreach ($output in $outputs.PSObject.Properties) {
+          $name = $output.Name.ToLowerInvariant()
+          $value = if ($output.Value.type -is [string] -and $output.Value.type -eq 'string') {
+            [string]$output.Value.value
+          } else {
+            ConvertTo-Json -InputObject $output.Value.value -Depth 100 -Compress
+          }
+          $value = $value.Replace('%', '%AZP25').Replace("`r", '%0D').Replace("`n", '%0A')
+          $secret = ([bool]$output.Value.sensitive).ToString().ToLowerInvariant()
+          Write-Host "##vso[task.setvariable variable=$name;isOutput=true;issecret=$secret]$value"
         }
       name: Terraform
       displayName: Set Outputs
+      env:
+        TERRAFORM_OUTPUTS_PATH: $(TerraformOutputs.jsonOutputVariablesPath)
