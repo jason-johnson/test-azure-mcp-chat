@@ -8,6 +8,6 @@ variables:
   - name: terraformContainerName
     value: terraform-mcpchat
   - name: terraformStorageAccountName
-    value: sajasonmcapterraform
+    value: sajasonmcap2f7wiw42
   - name: terraformResourceGroupName
     value: rg-manual
