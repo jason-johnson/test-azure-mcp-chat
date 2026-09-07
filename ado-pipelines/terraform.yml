@@ -10,6 +10,7 @@ parameters:
   - name: terraformVersion
   - name: terraformPath
   - name: servicePrinciple
+  - name: subscriptionId
   - name: containerName
     default: $(Container)
   - name: storageAccountName
@@ -49,6 +50,7 @@ steps:
       command: init
       provider: azurerm
       backendServiceArm: ${{ parameters.servicePrinciple }}
+      backendAzureRmOverrideSubscriptionID: ${{ parameters.subscriptionId }}
       backendAzureRmResourceGroupName: ${{ parameters.resourceGroupName }}
       backendAzureRmStorageAccountName: ${{ parameters.storageAccountName }}
       backendAzureRmContainerName: ${{ parameters.containerName }}
@@ -65,6 +67,7 @@ steps:
         customCommand: workspace
         commandOptions: 'select -or-create "${{ parameters.workspace }}"'
         environmentServiceNameAzureRM: ${{ parameters.servicePrinciple }}
+        environmentAzureRmOverrideSubscriptionID: ${{ parameters.subscriptionId }}
         environmentAzureRmUseIdTokenGeneration: true
 
   - ${{ if or(gt(length(parameters.preDestroySteps), 0), gt(length(parameters.preActionSteps), 0)) }}:
@@ -75,6 +78,7 @@ steps:
         provider: azurerm
         command: output
         environmentServiceNameAzureRM: ${{ parameters.servicePrinciple }}
+        environmentAzureRmOverrideSubscriptionID: ${{ parameters.subscriptionId }}
         environmentAzureRmUseIdTokenGeneration: true
         workingDirectory: ${{ parameters.terraformPath }}
 
@@ -116,6 +120,7 @@ steps:
         provider: azurerm
         command: ${{ parameters.action }}
         environmentServiceNameAzureRM: ${{ parameters.servicePrinciple }}
+        environmentAzureRmOverrideSubscriptionID: ${{ parameters.subscriptionId }}
         environmentAzureRmUseIdTokenGeneration: true
         workingDirectory: ${{ parameters.terraformPath }}
         commandOptions: ${{ parameters.commandOptions }}
@@ -135,6 +140,7 @@ steps:
         customCommand: workspace
         commandOptions: 'select default'
         environmentServiceNameAzureRM: ${{ parameters.servicePrinciple }}
+        environmentAzureRmOverrideSubscriptionID: ${{ parameters.subscriptionId }}
         environmentAzureRmUseIdTokenGeneration: true
 
     - task: TerraformTask@5
@@ -146,6 +152,7 @@ steps:
         customCommand: workspace
         commandOptions: 'delete "${{ parameters.workspace }}"'
         environmentServiceNameAzureRM: ${{ parameters.servicePrinciple }}
+        environmentAzureRmOverrideSubscriptionID: ${{ parameters.subscriptionId }}
         environmentAzureRmUseIdTokenGeneration: true
 
   - ${{ if eq(parameters.action, 'apply') }}:
@@ -156,6 +163,7 @@ steps:
         provider: azurerm
         command: plan
         environmentServiceNameAzureRM: ${{ parameters.servicePrinciple }}
+        environmentAzureRmOverrideSubscriptionID: ${{ parameters.subscriptionId }}
         environmentAzureRmUseIdTokenGeneration: true
         workingDirectory: ${{ parameters.terraformPath }}
         commandOptions: '${{ parameters.commandOptions }} -out="$(System.DefaultWorkingDirectory)/terraform.tfplan"'
@@ -193,6 +201,7 @@ steps:
         provider: azurerm
         command: apply
         environmentServiceNameAzureRM: ${{ parameters.servicePrinciple }}
+        environmentAzureRmOverrideSubscriptionID: ${{ parameters.subscriptionId }}
         environmentAzureRmUseIdTokenGeneration: true
         workingDirectory: ${{ parameters.terraformPath }}
         commandOptions: '"$(System.DefaultWorkingDirectory)/terraform.tfplan"'
@@ -205,6 +214,7 @@ steps:
         provider: azurerm
         command: output
         environmentServiceNameAzureRM: ${{ parameters.servicePrinciple }}
+        environmentAzureRmOverrideSubscriptionID: ${{ parameters.subscriptionId }}
         environmentAzureRmUseIdTokenGeneration: true
         workingDirectory: ${{ parameters.terraformPath }}
 

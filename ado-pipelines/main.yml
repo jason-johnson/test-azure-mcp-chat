@@ -34,6 +34,7 @@ jobs:
           terraformVersion: $(terraformVersion)
           terraformPath: $(terraformPath)
           servicePrinciple: $(servicePrinciple)
+          subscriptionId: $(terraformSubscriptionId)
           containerName: $(terraformContainerName)
           storageAccountName: $(terraformStorageAccountName)
           workspace: ${{ variables.saltVar }}
