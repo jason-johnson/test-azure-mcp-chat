@@ -23,7 +23,7 @@ variables:
       value: ""
 
 pool:
-  name: 'jasojohnson-mcaps2'
+  name: 'jasojohnson-mcap2'
 
 jobs:
   - job: Terraform
