@@ -4,7 +4,7 @@ variables:
   - name: terraformPath
     value: infrastructure
   - name: servicePrinciple
-    value: mcaps-jasojohnson-1
+    value: mcaps-jasojohnson-mgmt-grp
   - name: terraformSubscriptionId
     value: 3b650643-abd5-4adb-97e4-a833551a40ff
   - name: terraformContainerName
