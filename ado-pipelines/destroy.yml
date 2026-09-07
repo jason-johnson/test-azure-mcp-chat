@@ -16,7 +16,7 @@ variables:
       value: ''
 
 pool:
-  name: 'jasojohnson-mcaps'
+  name: 'jasojohnson-mcap2'
 
 steps:
   - template: terraform.yml
